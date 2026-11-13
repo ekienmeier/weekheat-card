@@ -1,5 +1,6 @@
 // Screenshots of a Home Assistant dashboard for development, with Playwright (Chromium).
-// Env: HA_URL, HA_TOKEN (a long-lived token), OUT (directory), DARK=1 for the dark theme. Args: dashboard path, then steps:
+// Env: HA_URL, HA_TOKEN (a long-lived token), OUT (directory), DARK=1 for the dark theme,
+// CARD: a card file to use instead of the installed one. Args: dashboard path, then steps:
 //   shot:<name>          screenshot of the first weekheat-card as <name>.png
 //   click:<css>          click an element (CSS pierces shadow DOM)
 //   fill:<css>=<value>   fill an input and fire change
@@ -18,8 +19,11 @@ const logs = [];
 page.on('console', (m) => { if (['error', 'warning'].includes(m.type())) logs.push(`${m.type()}: ${m.text()}`); });
 page.on('dialog', (d) => d.accept());
 page.on('pageerror', (e) => logs.push(`pageerror: ${e.message}`));
-// With the card also installed from the Marketplace, load only the development copy.
-await page.route('**/community/weekheat-card/**', (r) => r.abort());
+// Serve the working copy (CARD, a file path) in place of the card installed from the Marketplace.
+if (process.env.CARD) {
+  const { readFileSync } = await import('node:fs');
+  await page.route('**/community/weekheat-card/weekheat-card.js*', (r) => r.fulfill({ contentType: 'text/javascript', body: readFileSync(process.env.CARD, 'utf8') }));
+}
 await page.goto(`${url}/manifest.json`);
 await page.evaluate(({ url, token, dark }) => {
   localStorage.setItem('hassTokens', JSON.stringify({

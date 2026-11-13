@@ -83,7 +83,8 @@ also be added in Home Assistant's calendar view.
 - `tests/`: logic tests, `node --test tests/*.test.mjs` (Node 22).
 - `tools/ha.py`: a small REST/WebSocket client (URL and token from `~/.config/weekheat/`).
 - `tools/deploy_blueprint.py`: save a blueprint from this repo to Home Assistant.
-- `tools/serve.py`, `tools/shoot.mjs`: serve the card to a dev dashboard and take screenshots with Playwright.
+- `tools/shoot.mjs`: screenshots of a dashboard with Playwright, with the working copy of the card in place of
+  the installed one.
 
 ## License
 
