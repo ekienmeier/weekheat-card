@@ -2,7 +2,7 @@
 // Pairs with the Weekheat blueprints (weekheat_day script, weekheat_room automation).
 // The first part (exported) is plain logic without DOM, tested in tests/logic.test.mjs.
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 export const WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const SCHEDULE_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 export const ROOM_BLUEPRINT = 'weekheat_room.yaml';
@@ -207,6 +207,8 @@ export const I18N = {
     confirm_delete_plan: 'Plan löschen?', saved: 'Gespeichert', error: 'Fehler',
     new_room_paused: 'Neue Räume starten pausiert: Pläne prüfen, dann aktivieren.',
     late: 'Verspätet', dismiss: 'Ausblenden', reason_weekend: 'Wochenende',
+    heating: 'Heizt', scheduled: 'Nach Plan', current: 'Raum', layout_dial: 'Regler', layout_compact: 'Kompakt',
+    setpoint: 'Solltemperatur',
   },
   en: {
     working_day: 'Working day', free_day: 'Free day', today: 'Today', tomorrow: 'Tomorrow',
@@ -233,6 +235,8 @@ export const I18N = {
     confirm_delete_plan: 'Delete plan?', saved: 'Saved', error: 'Error',
     new_room_paused: 'New rooms start paused: check the plans, then activate.',
     late: 'Late', dismiss: 'Dismiss', reason_weekend: 'Weekend',
+    heating: 'Heating', scheduled: 'Scheduled', current: 'Room', layout_dial: 'Dial', layout_compact: 'Compact',
+    setpoint: 'Setpoint',
   },
 };
 
@@ -266,6 +270,40 @@ export function tempColor(t) {
   return `hsl(${Math.round(hue)}, 70%, ${Math.round(55 - x * 5)}%)`;
 }
 
+// ---------- dial ----------
+
+/** The dial is a 270° arc in a 200×200 box, from bottom left (135°) clockwise to bottom right. */
+export const DIAL = { cx: 100, cy: 100, r: 80, start: 135, sweep: 270 };
+
+/** Angle in degrees (0 = right, clockwise) of temperature `v` on a scale lo..hi. */
+export function dialAngle(v, lo, hi) {
+  const x = Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+  return DIAL.start + x * DIAL.sweep;
+}
+
+/** Point on the dial circle (radius `r`) at angle `a`. */
+export function dialPoint(a, r = DIAL.r) {
+  const rad = (a * Math.PI) / 180;
+  return [DIAL.cx + r * Math.cos(rad), DIAL.cy + r * Math.sin(rad)];
+}
+
+/** SVG arc path from angle a1 to a2 (clockwise). */
+export function dialArc(a1, a2, r = DIAL.r) {
+  const [x1, y1] = dialPoint(a1, r);
+  const [x2, y2] = dialPoint(a2, r);
+  return `M${x1.toFixed(2)} ${y1.toFixed(2)}A${r} ${r} 0 ${a2 - a1 > 180 ? 1 : 0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`;
+}
+
+/** Temperature for a pointer at (x, y) in dial coordinates, snapped to `step`. The gap at the bottom
+ * goes to the nearer end. */
+export function dialValue(x, y, lo, hi, step) {
+  const deg = (Math.atan2(y - DIAL.cy, x - DIAL.cx) * 180) / Math.PI;
+  let a = (((deg - DIAL.start) % 360) + 360) % 360;
+  if (a > DIAL.sweep) a = a > DIAL.sweep + (360 - DIAL.sweep) / 2 ? 0 : DIAL.sweep;
+  const v = lo + (a / DIAL.sweep) * (hi - lo);
+  return Math.max(lo, Math.min(hi, Math.round(v / step) * step));
+}
+
 /** HTML escape. */
 export function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -280,7 +318,10 @@ const RELOAD_MS = 10 * 60 * 1000; // re-read rooms, plans and days this often
 
 class WeekheatCard extends Base {
   setConfig(config) {
-    this._config = { days: 14, day_script: 'script.weekheat_day', ...config };
+    this._config = { days: 14, day_script: 'script.weekheat_day', layout: 'dial', dial_min: MIN_T, dial_max: MAX_T, ...config };
+    let saved = null;
+    try { saved = localStorage.getItem('weekheat-layout'); } catch (e) { /* no storage */ }
+    this._layout = ['dial', 'compact'].includes(saved) ? saved : this._config.layout === 'compact' ? 'compact' : 'dial';
     this._ui = this._ui || { tab: 'rooms', expanded: {}, sub: {}, dayEdit: null, addRoom: null, addPlan: null };
     this._render();
   }
@@ -576,7 +617,67 @@ class WeekheatCard extends Base {
       const el = ev.target.closest('[data-c]');
       if (el) this._change(el.dataset.c, el);
     });
+    root.addEventListener('pointerdown', (ev) => {
+      const svg = ev.target.closest('svg[data-dial]');
+      if (!svg || ev.button > 0) return;
+      const [x, y] = this._dialEvent(ev, svg);
+      const d = Math.hypot(x - DIAL.cx, y - DIAL.cy);
+      if (d < DIAL.r - 28 || d > DIAL.r + 22) return; // only the ring
+      ev.preventDefault();
+      svg.setPointerCapture(ev.pointerId);
+      this._drag = { room: this._room(svg), svg };
+      this._dragMove(ev);
+    });
+    root.addEventListener('pointermove', (ev) => { if (this._drag) this._dragMove(ev); });
+    const end = () => {
+      if (!this._drag) return;
+      const { room, value } = this._drag;
+      this._drag = null;
+      if (value != null) this._setTarget(room, value, 300);
+    };
+    root.addEventListener('pointerup', end);
+    root.addEventListener('pointercancel', end);
+    root.addEventListener('keydown', (ev) => {
+      const svg = ev.target.closest?.('svg[data-dial]');
+      if (!svg) return;
+      const k = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[ev.key];
+      if (!k) return;
+      ev.preventDefault();
+      const room = this._room(svg);
+      const n = this._roomNow(room);
+      const base = this._stepTarget?.room === room.id ? this._stepTarget.value : (n.target ?? n.wanted ?? 20);
+      this._setTarget(room, base + k * n.step, 700);
+      this.shadowRoot.querySelector(`[data-room="${room.id}"] svg[data-dial]`)?.focus();
+    });
     root.addEventListener('focusout', () => { if (this._pending) { this._pending = false; setTimeout(() => this._render(), 0); } });
+  }
+
+  /** Show `v` at once and write it to the room's thermostats after `delay` ms (repeated calls restart the wait). */
+  _setTarget(room, v, delay) {
+    const n = this._roomNow(room);
+    v = Math.max(MIN_T, Math.min(MAX_T, Math.round(v / n.step) * n.step));
+    this._stepTarget = { room: room.id, value: v };
+    clearTimeout(this._stepTimer);
+    this._stepTimer = setTimeout(() => {
+      this._run(() => this._hass.callService('climate', 'set_temperature', { entity_id: room.thermostats, temperature: v }), false)
+        .finally(() => { setTimeout(() => { if (this._stepTarget?.value === v) { this._stepTarget = null; this._render(); } }, 4000); });
+    }, delay);
+    this._render();
+  }
+
+  _dialEvent(ev, svg) {
+    const b = svg.getBoundingClientRect();
+    return [((ev.clientX - b.left) / b.width) * 200, ((ev.clientY - b.top) / b.height) * 200];
+  }
+
+  _dragMove(ev) {
+    const { room, svg } = this._drag;
+    const n = this._roomNow(room);
+    const [x, y] = this._dialEvent(ev, svg);
+    const v = dialValue(x, y, this._config.dial_min, this._config.dial_max, n.step);
+    if (v === this._drag.value) return;
+    this._drag.value = v;
+    svg.innerHTML = this._dialSvg(room, n, v);
   }
 
   _room(el) { return this._rooms.find((r) => r.id === el.closest('[data-room]')?.dataset.room); }
@@ -603,13 +704,12 @@ class WeekheatCard extends Base {
       case 'step': {
         const n = this._roomNow(room);
         const base = this._stepTarget?.room === room.id ? this._stepTarget.value : (n.target ?? n.wanted ?? 20);
-        const v = Math.max(MIN_T, Math.min(MAX_T, Math.round((base + (+el.dataset.v) * n.step) / n.step) * n.step));
-        this._stepTarget = { room: room.id, value: v };
-        clearTimeout(this._stepTimer);
-        this._stepTimer = setTimeout(() => {
-          this._stepTarget = null;
-          this._run(() => this._hass.callService('climate', 'set_temperature', { entity_id: room.thermostats, temperature: v }), false);
-        }, 700);
+        this._setTarget(room, base + (+el.dataset.v) * n.step, 700);
+        break;
+      }
+      case 'layout': {
+        this._layout = this._layout === 'dial' ? 'compact' : 'dial';
+        try { localStorage.setItem('weekheat-layout', this._layout); } catch (e) { /* no storage */ }
         break;
       }
       case 'active': {
@@ -756,6 +856,7 @@ class WeekheatCard extends Base {
     if (!this.shadowRoot) { this.attachShadow({ mode: 'open' }); this._bind(); }
     const active = this.shadowRoot.activeElement;
     if (!force && active && ['INPUT', 'SELECT', 'TEXTAREA'].includes(active.tagName)) { this._pending = true; return; }
+    if (this._drag) return;
     if (!this._hass) { this.shadowRoot.innerHTML = `<style>${STYLE}</style><ha-card></ha-card>`; return; }
     const t = this._t;
     const ui = this._ui;
@@ -849,11 +950,53 @@ class WeekheatCard extends Base {
     else if (sub === 'week') detail = this._renderWeek(room);
     else if (sub === 'room') detail = this._renderRoomSettings(room);
     return `<div class="room open" data-room="${room.id}">${head}
-      <div class="ctrl"><button class="round" data-a="step" data-v="-1">−</button><div class="target">${fmtTemp(shown, this._lang)}</div><button class="round" data-a="step" data-v="1">+</button>
-        ${this._admin ? `<button class="btn flat small" data-a="active">${esc(n.active ? t.active : t.paused)} ${n.active ? '●' : '○'}</button>` : ''}</div>
+      ${this._layout === 'dial' ? `<div class="dialbox">
+        <svg data-dial viewBox="0 0 200 200" tabindex="0" role="slider" aria-label="${esc(t.setpoint)}" aria-valuemin="${MIN_T}" aria-valuemax="${MAX_T}" aria-valuenow="${shown ?? ''}">${this._dialSvg(room, n, shown)}</svg>
+        <div class="ctrl dialctrl"><button class="round" data-a="step" data-v="-1">−</button><button class="round" data-a="step" data-v="1">+</button></div></div>`
+        : `<div class="ctrl"><button class="round" data-a="step" data-v="-1">−</button><div class="target">${fmtTemp(shown, this._lang)}</div><button class="round" data-a="step" data-v="1">+</button></div>`}
+      <div class="actions ctrlbar">${this._admin ? `<button class="btn flat small" data-a="active">${esc(n.active ? t.active : t.paused)} ${n.active ? '●' : '○'}</button>` : ''}
+        <span class="grow"></span><button class="btn flat small" data-a="layout">${esc(this._layout === 'dial' ? t.layout_compact : t.layout_dial)}</button></div>
       ${th}
       <div class="today"><span class="dim">${esc(t.today)}: ${esc(this._planName(room, n.plan))}</span>${this._ribbon(n.periods, now.min)}</div>
       <div class="tabs">${subs}</div>${detail}</div>`;
+  }
+
+  /** Inside of the dial SVG for setpoint `v`: coloured scale, filled up to `v`, the handle, a tick for the
+   * room temperature, a dot for the plan's temperature when it differs, and the texts in the middle. */
+  _dialSvg(room, n, v) {
+    const t = this._t;
+    const lo = this._config.dial_min;
+    const hi = this._config.dial_max;
+    const parts = [];
+    const end = DIAL.start + DIAL.sweep;
+    const av = v != null ? dialAngle(v, lo, hi) : null;
+    parts.push(`<path d="${dialArc(DIAL.start, end)}" class="dtrack"/>`);
+    if (av != null && av > DIAL.start + 0.5) parts.push(`<path d="${dialArc(DIAL.start, av)}" class="dfill${v <= OFF_T ? ' off' : ''}"/>`);
+    if (n.wanted != null && n.manual && n.active) {
+      const [px, py] = dialPoint(dialAngle(n.wanted, lo, hi), DIAL.r - 17);
+      parts.push(`<circle cx="${px.toFixed(2)}" cy="${py.toFixed(2)}" r="3" class="dplan"><title>${esc(t.plan)} ${esc(fmtTemp(n.wanted, this._lang))}</title></circle>`);
+    }
+    if (n.current != null) {
+      const a = dialAngle(n.current, lo, hi);
+      const [x1, y1] = dialPoint(a, DIAL.r - 9);
+      const [x2, y2] = dialPoint(a, DIAL.r + 9);
+      parts.push(`<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" class="dcur"/>`);
+    }
+    if (av != null) {
+      const [hx, hy] = dialPoint(av);
+      parts.push(`<circle cx="${hx.toFixed(2)}" cy="${hy.toFixed(2)}" r="9" class="dhandle${v <= OFF_T ? ' off' : ''}"/>`);
+    }
+    const off = v != null && v <= OFF_T;
+    const status = !n.active ? t.paused : n.manual ? t.manual : n.heating ? t.heating : t.scheduled;
+    const cls = !n.active ? 'dim' : n.manual ? 'manual' : n.heating ? 'heat' : 'dim';
+    const big = v == null ? '–' : off ? t.off : Number(v).toLocaleString(this._lang === 'de' ? 'de-AT' : 'en-GB', { maximumFractionDigits: 1 });
+    const cur = n.current != null ? `${t.current} ${fmtTemp(Math.round(n.current * 10) / 10, this._lang)}` : '';
+    const heat = n.heating && cls !== 'heat' ? `<tspan class="heat"> · ${esc(t.heating)}</tspan>` : '';
+    parts.push(`<text x="100" y="72" class="dstatus ${cls}">${esc(status)}${heat}</text>`,
+      `<text x="100" y="${off ? 112 : 116}" class="dbig${off ? ' off' : ''}">${esc(big)}${off || v == null ? '' : '<tspan class="dunit" dy="-17">°C</tspan>'}</text>`,
+      `<text x="100" y="140" class="dsmall">${esc(cur)}</text>`);
+    if (n.manual && n.active && n.wanted != null) parts.push(`<text x="100" y="156" class="dsmall">${esc(t.plan)} ${esc(fmtTemp(n.wanted, this._lang))}</text>`);
+    return parts.join('');
   }
 
   _renderPlans(room) {
@@ -1005,6 +1148,27 @@ const STYLE = `
   .ctrl { display: flex; align-items: center; gap: 12px; margin: 10px 0 6px; }
   .round { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--divider-color); background: none; color: var(--primary-text-color); font-size: 1.3em; cursor: pointer; }
   .target { font-size: 1.5em; min-width: 4.5em; text-align: center; }
+  .dialbox { position: relative; max-width: 280px; margin: 4px auto 0; }
+  .dialbox svg { display: block; width: 100%; height: auto; touch-action: none; cursor: pointer; outline: none; user-select: none; -webkit-user-select: none; }
+  .dialbox svg:focus-visible .dhandle { stroke-width: 5; }
+  .dialctrl { position: absolute; left: 0; right: 0; bottom: 2%; justify-content: space-between; margin: 0; padding: 0 4%; pointer-events: none; }
+  .dialctrl .round { pointer-events: auto; background: var(--card-background-color); }
+  .dtrack { fill: none; stroke: var(--secondary-background-color, #e5e5e5); stroke-width: 12; stroke-linecap: round; }
+  .dfill { fill: none; stroke: var(--state-climate-heat-color, #ff8a50); stroke-width: 12; stroke-linecap: round; }
+  .dhandle { fill: var(--card-background-color, #fff); stroke: var(--state-climate-heat-color, #ff8a50); stroke-width: 4; }
+  .dfill.off, .dhandle.off { stroke: var(--state-climate-off-color, #8a9099); }
+  .dcur { stroke: var(--primary-text-color); stroke-width: 3; stroke-linecap: round; }
+  .dplan { fill: var(--wh-manual); }
+  .dialbox text { text-anchor: middle; fill: var(--primary-text-color); font-family: inherit; }
+  .dstatus { font-size: 11px; }
+  .dstatus.dim, .dsmall { fill: var(--secondary-text-color) !important; }
+  .dstatus.heat, .dstatus .heat { fill: var(--state-climate-heat-color, #ff8a50) !important; }
+  .dstatus.manual { fill: var(--wh-manual) !important; }
+  .dbig { font-size: 46px; font-weight: 300; }
+  .dbig.off { font-size: 34px; }
+  .dunit { font-size: 15px; }
+  .dsmall { font-size: 10.5px; }
+  .ctrlbar { margin-top: 2px; }
   .th { display: flex; justify-content: space-between; gap: 8px; font-size: .9em; padding: 1px 0; }
   .today { margin: 8px 0 4px; font-size: .9em; }
   .ribbon { position: relative; height: 22px; border-radius: 5px; overflow: hidden; background: var(--secondary-background-color); margin-top: 4px; }

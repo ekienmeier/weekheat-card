@@ -11,6 +11,8 @@ single setpoint.
   `Homeoffice` → the Home office plan), and exceptions set on the card.
 - Thermostats are written only when the scheduled temperature changes, so a change made by hand holds
   until the next period with a different temperature. There is no manual mode to leave.
+- An opened room shows its setpoint on a **dial** (drag the handle, use − / + or the arrow keys) or in a
+  compact row.
 - Everything runs inside Home Assistant (a script, one automation per room, schedule helpers). The
   card edits and shows; nothing depends on a dashboard being open.
 
@@ -67,6 +69,8 @@ Status: early (0.1). Tested with Aqara E1/W600 thermostats through HomeKit Contr
 | `rooms` | all | Room automations to show, in this order (entity ids or automation ids) |
 | `days` | 14 | Days in the day list |
 | `day_script` | `script.weekheat_day` | The day script |
+| `layout` | `dial` | `dial` or `compact`: how an opened room shows its setpoint. Each browser remembers the last layout picked on the card. |
+| `dial_min`, `dial_max` | 5, 30 | Scale of the dial in °C |
 
 ## Exceptions
 

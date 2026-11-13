@@ -95,3 +95,17 @@ test('texts', () => {
   assert.equal(fmtTemp(20.5, 'de'), '20,5 °C');
   assert.equal(fmtTemp({ off: true, temperature: 5 }, 'de'), 'Aus');
 });
+
+test('dial: angle and pointer value', async () => {
+  const { dialAngle, dialValue, dialPoint, DIAL } = await import('../weekheat-card.js');
+  assert.equal(dialAngle(5, 5, 30), 135);
+  assert.equal(dialAngle(30, 5, 30), 405);
+  assert.equal(dialAngle(17.5, 5, 30), 270); // top
+  assert.equal(dialAngle(2, 5, 30), 135); // clamped
+  const at = (v) => { const [x, y] = dialPoint(dialAngle(v, 5, 30)); return dialValue(x, y, 5, 30, 0.5); };
+  for (const v of [5, 12, 17.5, 21, 24.5, 30]) assert.equal(at(v), v);
+  // bottom gap: left of centre goes to the low end, right to the high end
+  assert.equal(dialValue(DIAL.cx - 10, DIAL.cy + 80, 5, 30, 0.5), 5);
+  assert.equal(dialValue(DIAL.cx + 10, DIAL.cy + 80, 5, 30, 0.5), 30);
+  assert.equal(dialValue(DIAL.cx, DIAL.cy - 80, 5, 30, 0.5), 17.5);
+});
