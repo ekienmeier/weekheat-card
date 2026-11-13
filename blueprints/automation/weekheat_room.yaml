@@ -216,9 +216,7 @@ actions:
           message: >-
             {%- set t = wanted | string ~ ' °C' -%}
             {%- if language == 'de' -%}
-              {{ t }} wurde erst um {{ now().strftime('%H:%M') }} eingestellt ({{ late | join(', ') }}):
-              Home Assistant lief nicht, als die Periode begann.
+              {{ t }} wurde erst um {{ now().strftime('%H:%M') }} eingestellt ({{ late | join(', ') }}): Home Assistant lief nicht, als die Periode begann.
             {%- else -%}
-              {{ t }} was only set at {{ now().strftime('%H:%M') }} ({{ late | join(', ') }}):
-              Home Assistant was not running when the period started.
+              {{ t }} was only set at {{ now().strftime('%H:%M') }} ({{ late | join(', ') }}): Home Assistant was not running when the period started.
             {%- endif -%}
