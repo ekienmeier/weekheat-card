@@ -1,0 +1,184 @@
+blueprint:
+  name: Weekheat day
+  description: >-
+    Decides for one or more dates whether each is a working day or a free day,
+    and why. The first rule that matches wins: an exception in the exceptions
+    calendar, a weekend day (a weekday that is not a workday of the Workday
+    sensor), a public holiday (Workday), a calendar event whose title contains
+    the keyword of a keyword rule. A keyword rule makes the day free, or keeps
+    it a working day with a named plan (e.g. "Homeoffice"). Otherwise the day
+    is a working day. Used by the Weekheat room automations and the Weekheat
+    card (custom:weekheat-card).
+  domain: script
+  source_url: https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/script/weekheat_day.yaml
+  input:
+    workday:
+      name: Workday sensor
+      description: Its workdays are the working weekdays; its holidays are the public holidays.
+      selector:
+        entity:
+          filter:
+            - integration: workday
+              domain: binary_sensor
+    exceptions:
+      name: Exceptions calendar
+      description: >-
+        All-day events titled "Werktag" / "Working day", "Freier Tag" / "Free day",
+        or "Plan: <name>", optionally followed by " – <note>". Set on the card.
+      selector:
+        entity:
+          filter:
+            - domain: calendar
+    holidays:
+      name: Holiday calendar (optional)
+      description: A Holiday integration calendar, for the names of public holidays.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: calendar
+    calendars:
+      name: Keyword calendars
+      description: The calendars whose event titles are searched for the keywords.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: calendar
+    rules:
+      name: Keyword rules
+      description: >-
+        In order; the first that matches wins. A rule without a plan makes the
+        day free; a rule with a plan keeps it a working day with that plan.
+      default: []
+      selector:
+        object:
+          multiple: true
+          label_field: keyword
+          fields:
+            keyword:
+              label: Keyword
+              required: true
+              selector:
+                text: {}
+            plan:
+              label: Plan (empty = free day)
+              selector:
+                text: {}
+
+fields:
+  start:
+    name: Start
+    description: First date (default today).
+    selector:
+      date: {}
+  days:
+    name: Days
+    description: Number of dates from the start (1–62).
+    default: 1
+    selector:
+      number:
+        min: 1
+        max: 62
+        mode: box
+
+mode: parallel
+max: 20
+
+variables:
+  workday: !input workday
+  exceptions: !input exceptions
+  holidays: !input holidays
+  calendars: !input calendars
+  rules: !input rules
+
+sequence:
+  - variables:
+      first: "{{ start if start is defined and start else now().date() | string }}"
+      count: "{{ [[(days | int(1)) if days is defined else 1, 1] | max, 62] | min }}"
+      dates: >-
+        {% set d0 = strptime(first, '%Y-%m-%d') %}{% set ns = namespace(l=[]) %}
+        {% for i in range(count) %}{% set ns.l = ns.l + [(d0 + timedelta(days=i)).date() | string] %}{% endfor %}
+        {{ ns.l }}
+      keyword_calendars: "{{ [calendars] if calendars is string else calendars | list }}"
+      sources: >-
+        {{ (keyword_calendars + [exceptions] + ([holidays] if holidays else [])) | reject('eq', '') | unique | list }}
+      until: "{{ (strptime(dates[-1], '%Y-%m-%d') + timedelta(days=1)).date() | string }}"
+      out: []
+  - action: calendar.get_events
+    target:
+      entity_id: "{{ sources }}"
+    data:
+      start_date_time: "{{ first }} 00:00:00"
+      end_date_time: "{{ until }} 00:00:00"
+    response_variable: events
+  - repeat:
+      for_each: "{{ dates }}"
+      sequence:
+        - action: workday.check_date
+          target:
+            entity_id: !input workday
+          data:
+            check_date: "{{ repeat.item }}"
+          response_variable: wd
+        - variables:
+            out: >-
+              {%- macro covers(e, d) -%}
+                {%- set s = e.start | string -%}{%- set en = e.end | string -%}
+                {%- if s | length == 10 -%}{{ 'y' if s <= d < en else '' }}
+                {%- else -%}
+                  {%- set sd = (as_local(as_datetime(s)).date() | string) -%}
+                  {%- set ed = as_local(as_datetime(en)) -%}{%- set edd = ed.date() | string -%}
+                  {{ 'y' if sd <= d and (edd > d or (edd == d and (ed.time() | string) != '00:00:00')) else '' }}
+                {%- endif -%}
+              {%- endmacro -%}
+              {%- set d = repeat.item -%}
+              {%- set wkey = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'][strptime(d, '%Y-%m-%d').weekday()] -%}
+              {%- set workdays = state_attr(workday, 'workdays') or ['mon', 'tue', 'wed', 'thu', 'fri'] -%}
+              {%- set is_workday = wd[workday].workday -%}
+              {%- set ns = namespace(r=none) -%}
+              {#- 1. exception -#}
+              {%- for e in events.get(exceptions, {}).get('events', []) if ns.r is none and covers(e, d) -%}
+                {%- set title = e.summary | trim -%}
+                {%- set parts = title | regex_findall('^(.*?)(?:\s+[–-]\s+(.*))?$') -%}
+                {%- set base = parts[0][0] | trim if parts else title -%}
+                {%- set note = (parts[0][1] | trim if parts else '') or none -%}
+                {%- set low = base | lower -%}
+                {%- if low in ['werktag', 'working day', 'arbeitstag'] -%}
+                  {%- set ns.r = {'free': false, 'plan': none, 'kind': 'exception', 'detail': base, 'note': note} -%}
+                {%- elif low in ['freier tag', 'free day', 'wochenende', 'weekend'] -%}
+                  {%- set ns.r = {'free': true, 'plan': none, 'kind': 'exception', 'detail': base, 'note': note} -%}
+                {%- elif low.startswith('plan:') -%}
+                  {%- set ns.r = {'free': false, 'plan': base[5:] | trim, 'kind': 'exception', 'detail': base, 'note': note} -%}
+                {%- endif -%}
+              {%- endfor -%}
+              {#- 2. weekend day -#}
+              {%- if ns.r is none and wkey not in workdays -%}
+                {%- set ns.r = {'free': true, 'plan': none, 'kind': 'weekend', 'detail': wkey} -%}
+              {%- endif -%}
+              {#- 3. public holiday -#}
+              {%- if ns.r is none and not is_workday -%}
+                {%- set hs = namespace(name=none) -%}
+                {%- for e in events.get(holidays, {}).get('events', []) if hs.name is none and covers(e, d) -%}
+                  {%- set hs.name = e.summary -%}
+                {%- endfor -%}
+                {%- set ns.r = {'free': true, 'plan': none, 'kind': 'holiday', 'detail': hs.name} -%}
+              {%- endif -%}
+              {#- 4. calendar keyword -#}
+              {%- for rule in rules if ns.r is none -%}
+                {%- set kw = (rule if rule is string else rule.get('keyword', '')) | string | trim | lower -%}
+                {%- set plan = none if rule is string else ((rule.get('plan') or '') | string | trim or none) -%}
+                {%- for cal in keyword_calendars if ns.r is none and kw -%}
+                  {%- for e in events.get(cal, {}).get('events', []) if ns.r is none and kw in (e.summary | lower) and covers(e, d) -%}
+                    {%- set ns.r = {'free': plan is none, 'plan': plan, 'kind': 'calendar', 'detail': e.summary,
+                                    'source': state_attr(cal, 'friendly_name') or cal, 'keyword': kw} -%}
+                  {%- endfor -%}
+                {%- endfor -%}
+              {%- endfor -%}
+              {%- set r = ns.r or {'free': false, 'plan': none, 'kind': 'plain', 'detail': none} -%}
+              {{ out + [dict({'date': d, 'weekday': wkey}, **r)] }}
+  - variables:
+      result: "{{ {'days': out} }}"
+  - stop: Done
+    response_variable: result
