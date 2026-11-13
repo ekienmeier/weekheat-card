@@ -205,6 +205,11 @@ period is applied at once if the wanted value changed in the meantime, and a **p
 notification** says so ("Bedroom: 06:00 period (21 °C) applied late at 06:42, Home Assistant was not
 running"). The card shows the same as a banner until it is dismissed.
 
+Tested 2026-11-13: HA restarted across a period boundary (down 10:24:45–10:25:50, the thermostat entity
+back at 10:26:06); the start run set the new period at 10:26:22 and raised the notification. Limit: a
+thermostat that is still unavailable when the start run happens is written later by the "back"
+trigger, without a notification.
+
 ## Exceptions
 
 All-day events in the Local Calendar (`calendar.weekheat_ausnahmen`). They have no size limit, survive
