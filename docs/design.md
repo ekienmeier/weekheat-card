@@ -1,6 +1,6 @@
 # Weekheat design
 
-Status: draft for review, 2026-11-13 (second round). Nothing here is built yet.
+Status: draft for review, 2026-11-13 (third round). Nothing here is built yet.
 
 ## Goal
 
@@ -52,7 +52,7 @@ preview, and both must agree. A script with a response is callable from both, so
   free: true
   kind: calendar         # plain | holiday | calendar | exception
   reason: "Family: Schulautonomer Tag: schulfrei"
-  plan: null             # a plan name, only for an exception that names one (see Exceptions)
+  plan: null             # a plan name, from an exception or a keyword rule that names one
 ```
 
 The first rule that matches wins (the same order as hue-scp):
@@ -63,11 +63,14 @@ The first rule that matches wins (the same order as hue-scp):
 3. **Public holiday**: `workday.check_date` says not a workday although the weekday is a workday. The
    name comes from the holiday calendar's event that day, e.g. "Public holiday: Mariä Empfängnis".
 4. **Calendar keyword**: an event in one of the selected calendars, on that date, whose title contains
-   one of the keywords (ignoring case), e.g. `schulfrei`. Multi-day events count for each day they
-   cover (all-day event ends are exclusive).
+   the keyword of a **keyword rule** (ignoring case). Multi-day events count for each day they cover
+   (all-day event ends are exclusive). A rule either makes the day a **free day** (e.g. `schulfrei`)
+   or keeps it a working day with a **named plan** (e.g. `Homeoffice` → plan Home office). If several
+   rules match, the first in the list wins.
 5. Otherwise: a working day.
 
-Keywords only ever make a day a free day.
+Since weekend days and holidays come first, keyword rules only act on working days: a "Homeoffice"
+event on a Saturday or a holiday changes nothing.
 
 **Script inputs**, edited on the card's settings panel (or in HA's script editor):
 
@@ -75,7 +78,7 @@ Keywords only ever make a day a free day.
 |---|---|
 | Workday sensor | `binary_sensor.workday_sensor_…` |
 | Keyword calendars (any number) | the family calendar, the school calendar |
-| Keywords (any number) | `schulfrei` |
+| Keyword rules (ordered) | `schulfrei` → free day; `Homeoffice` → plan Home office |
 | Exceptions calendar | `calendar.weekheat_ausnahmen` |
 | Holiday calendar (optional) | `calendar.osterreich_4` |
 
@@ -110,8 +113,14 @@ free_day: free_day
 Which plan a room uses on a date:
 - free day → the free-day plan;
 - working day → `week[weekday]`. Sat and Sun only matter when an exception makes them a working day;
-- an exception that names a plan → that plan, if the room has a plan of that name; otherwise the rule
-  above with the exception's free/working value.
+- a day with a plan name (from an exception or a keyword rule) → that plan, if the room has a plan of
+  that name (matched by slug, ignoring case); otherwise `week[weekday]`. So a "Homeoffice" event
+  switches only the rooms that have a Home office plan.
+
+Example, home office mostly on Fridays: either the week assigns Fri → Home office and an office Friday
+gets an exception naming the Weekday plan, or the week keeps Fri → Weekday and a (recurring)
+"Homeoffice" calendar event marks the home-office days. Both work; the second keeps the calendar as
+the one place to look.
 
 A plan's day runs 00:00–24:00. At midnight the next day's plan takes over.
 
@@ -225,8 +234,9 @@ titles (`Working day`, `Free day`) are read too. Writing uses `calendar.create_e
   the free-day plan.
 - **Days**: the next 14 days from the day script: date, working/free, reason, the plan each room will
   use; today and tomorrow highlighted. Tap a day to set an exception. Shared by all rooms.
-- **Settings** (home): keyword calendars (picked from the calendar entities), keywords (chips), the
-  Workday sensor, the exceptions and holiday calendars. Saved as the day script's inputs.
+- **Settings** (home): keyword calendars (picked from the calendar entities), keyword rules (keyword
+  plus "free day" or a plan name, reorderable), the Workday sensor, the exceptions and holiday
+  calendars. Saved as the day script's inputs. Plan names offered are those used in any room.
 - **Setup**: "Add room" asks for a name and thermostats, then creates the starter plans, the state
   helper and the automation. Missing pieces are listed per room with a button to create them.
 - **Language**: German and English, by the HA user's language.
@@ -260,11 +270,12 @@ change thermostats and exceptions. (To be confirmed for `schedule/update` while 
 ## Decisions (2026-11-13)
 
 - Exceptions in a Local Calendar; Holiday integration for names (both set up).
-- Keyword calendars and keywords configurable on the card, stored in the day script.
-- Named plans per room plus a week; free days use the free-day plan.
+- Keyword calendars and keyword rules configurable on the card, stored in the day script. A rule
+  makes a day free or names a plan (e.g. `Homeoffice`).
+- Named plans per room plus a week; free days use the free-day plan; exceptions can name a plan.
 - Starter plans as above.
+- Editing plans, the week, settings and rooms is admin-only (accepted).
 
 ## Open questions
 
-1. **Exceptions naming a plan** (e.g. "Home office on 20 Nov"): wanted, or are working/free enough?
-2. **Admin only** for editing plans and the week: OK for your household?
+None at the moment.
