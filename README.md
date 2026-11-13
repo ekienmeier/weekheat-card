@@ -13,6 +13,8 @@ single setpoint.
   until the next period with a different temperature. There is no manual mode to leave.
 - An opened room shows its setpoint on a **dial** (drag the handle, use − / + or the arrow keys) or in a
   compact row.
+- **Windows and doors**: while a room's window or door sensor is open (for a delay, 30 s by default), its
+  thermostats are set to 5 °C; when all are closed, the setpoints from before come back.
 - Everything runs inside Home Assistant (a script, one automation per room, schedule helpers). The
   card edits and shows; nothing depends on a dashboard being open.
 

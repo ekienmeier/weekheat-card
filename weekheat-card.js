@@ -2,7 +2,7 @@
 // Pairs with the Weekheat blueprints (weekheat_day script, weekheat_room automation).
 // The first part (exported) is plain logic without DOM, tested in tests/logic.test.mjs.
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.3.0';
 export const WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const SCHEDULE_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 export const ROOM_BLUEPRINT = 'weekheat_room.yaml';
@@ -10,6 +10,7 @@ export const DAY_BLUEPRINT = 'weekheat_day.yaml';
 export const MIN_T = 5;
 export const MAX_T = 30;
 export const OFF_T = 5;
+export const WINDOW_CLASSES = ['window', 'door', 'opening', 'garage_door'];
 
 // ---------- time ----------
 
@@ -208,7 +209,9 @@ export const I18N = {
     new_room_paused: 'Neue Räume starten pausiert: Pläne prüfen, dann aktivieren.',
     late: 'Verspätet', dismiss: 'Ausblenden', reason_weekend: 'Wochenende',
     heating: 'Heizt', scheduled: 'Nach Plan', current: 'Raum', layout_dial: 'Regler', layout_compact: 'Kompakt',
-    setpoint: 'Solltemperatur',
+    setpoint: 'Solltemperatur', window_open: 'Fenster offen', windows: 'Fenster- und Türkontakte',
+    window_delay: 'Verzögerung (Sekunden)',
+    window_help: 'Ist einer davon so lange offen, werden die Thermostate auf 5 °C gestellt; sind alle wieder zu, gilt wieder der Wert von vorher (oder der Plan, falls inzwischen eine neue Periode begann).',
   },
   en: {
     working_day: 'Working day', free_day: 'Free day', today: 'Today', tomorrow: 'Tomorrow',
@@ -236,7 +239,9 @@ export const I18N = {
     new_room_paused: 'New rooms start paused: check the plans, then activate.',
     late: 'Late', dismiss: 'Dismiss', reason_weekend: 'Weekend',
     heating: 'Heating', scheduled: 'Scheduled', current: 'Room', layout_dial: 'Dial', layout_compact: 'Compact',
-    setpoint: 'Setpoint',
+    setpoint: 'Setpoint', window_open: 'Window open', windows: 'Window and door sensors',
+    window_delay: 'Delay (seconds)',
+    window_help: 'When one of them has been open this long, the thermostats are set to 5 °C; when all are closed again, the value from before applies again (or the plan, if a new period began in between).',
   },
 };
 
@@ -368,7 +373,8 @@ class WeekheatCard extends Base {
           const i = c.use_blueprint.input || {};
           const list = (v) => (Array.isArray(v) ? v : v ? [v] : []);
           return { entity, id, cfg: c, name: i.room_name || c.alias, thermostats: list(i.thermostats), plans: list(i.plans),
-            week: i.week || {}, free_day: i.free_day, state: i.state };
+            week: i.week || {}, free_day: i.free_day, state: i.state, windows: list(i.windows),
+            window_delay: i.window_delay ?? 30 };
         });
       const order = this._config.rooms;
       if (Array.isArray(order) && order.length) rooms = order.map((e) => rooms.find((r) => r.entity === e || r.id === e)).filter(Boolean);
@@ -423,7 +429,7 @@ class WeekheatCard extends Base {
     const h = this._hass;
     if (!h || !this._rooms) return '';
     const ids = new Set();
-    for (const r of this._rooms) { ids.add(r.entity); r.thermostats.forEach((t) => ids.add(t)); r.plans.forEach((p) => ids.add(p)); }
+    for (const r of this._rooms) { ids.add(r.entity); r.thermostats.forEach((t) => ids.add(t)); r.plans.forEach((p) => ids.add(p)); (r.windows || []).forEach((w) => ids.add(w)); if (r.state) ids.add(r.state); }
     return [...ids].map((e) => h.states[e]?.last_updated).join('|');
   }
 
@@ -457,8 +463,12 @@ class WeekheatCard extends Base {
     const avail = th.filter((s) => !['unavailable', 'unknown'].includes(s.state));
     const cur = avail.map((s) => s.attributes.current_temperature).filter((x) => typeof x === 'number');
     const target = avail.map((s) => s.attributes.temperature).find((x) => typeof x === 'number');
-    const manual = wanted != null && avail.some((s) => s.state === 'off' || Math.abs((s.attributes.temperature ?? -99) - wanted) >= 0.25);
-    return { plan, periods, at, wanted, current: cur.length ? cur.reduce((a, b) => a + b, 0) / cur.length : null, target,
+    let saved = null;
+    try { saved = JSON.parse(h.states[room.state]?.state || '{}')._open || null; } catch (e) { /* not JSON */ }
+    const openWin = (room.windows || []).filter((w) => h.states[w]?.state === 'on');
+    const windowOpen = !!saved && h.states[room.entity]?.state === 'on';
+    const manual = !windowOpen && wanted != null && avail.some((s) => s.state === 'off' || Math.abs((s.attributes.temperature ?? -99) - wanted) >= 0.25);
+    return { windowOpen, openWin, plan, periods, at, wanted, current: cur.length ? cur.reduce((a, b) => a + b, 0) / cur.length : null, target,
       unavailable: th.length - avail.length, off: avail.some((s) => s.state === 'off'), manual,
       active: h.states[room.entity]?.state === 'on', step: avail[0]?.attributes.target_temp_step || 0.5,
       heating: avail.some((s) => s.attributes.hvac_action === 'heating') };
@@ -488,7 +498,8 @@ class WeekheatCard extends Base {
     room.cfg = cfg;
     Object.assign(room, { week: cfg.use_blueprint.input.week || {}, plans: cfg.use_blueprint.input.plans,
       free_day: cfg.use_blueprint.input.free_day, thermostats: cfg.use_blueprint.input.thermostats,
-      name: cfg.use_blueprint.input.room_name });
+      name: cfg.use_blueprint.input.room_name, windows: cfg.use_blueprint.input.windows || [],
+      window_delay: cfg.use_blueprint.input.window_delay ?? 30 });
   }
 
   async _poke(rooms = this._rooms) {
@@ -687,7 +698,8 @@ class WeekheatCard extends Base {
     if (!ui.draft || ui.draft.room !== room.id) {
       ui.draft = { room: room.id, plans: Object.fromEntries(room.plans.filter((p) => this._plans[p]).map((p) => [p,
         { name: this._planName(room, p), periods: this._plans[p].periods.map((x) => ({ ...x })) }])),
-      week: { ...room.week }, free_day: room.free_day, name: room.name, thermostats: [...room.thermostats] };
+      week: { ...room.week }, free_day: room.free_day, name: room.name, thermostats: [...room.thermostats],
+      windows: [...(room.windows || [])], window_delay: room.window_delay ?? 30 };
     }
     return ui.draft;
   }
@@ -751,7 +763,8 @@ class WeekheatCard extends Base {
       case 'save-room': {
         const d = this._draftFor(room);
         if (!d.name.trim() || !d.thermostats.length) return;
-        this._run(async () => { await this._saveRoomConfig(room, { room_name: d.name.trim(), thermostats: d.thermostats }); ui.draft = null; await this._poke([room]); });
+        const delay = Math.max(0, Math.min(900, Math.round(+d.window_delay || 0)));
+        this._run(async () => { await this._saveRoomConfig(room, { room_name: d.name.trim(), thermostats: d.thermostats, windows: d.windows, window_delay: delay }); ui.draft = null; await this._poke([room]); });
         return;
       }
       case 'day': ui.dayEdit = ui.dayEdit?.date === el.dataset.v ? null : this._dayDraft(el.dataset.v); break;
@@ -809,6 +822,8 @@ class WeekheatCard extends Base {
       case 'w-day': this._draftFor(room).week[el.dataset.v] = v; break;
       case 'w-free': this._draftFor(room).free_day = v; break;
       case 'r-name': this._draftFor(room).name = v; break;
+      case 'r-win': { const d = this._draftFor(room); d.windows = v ? [...d.windows, el.dataset.v] : d.windows.filter((w) => w !== el.dataset.v); break; }
+      case 'r-delay': this._draftFor(room).window_delay = v; return;
       case 'r-th': { const d = this._draftFor(room); d.thermostats = v ? [...d.thermostats, el.dataset.v] : d.thermostats.filter((t) => t !== el.dataset.v); break; }
       case 'ap-name': ui.addPlan.name = v; return;
       case 'ap-template': ui.addPlan.template = v; return;
@@ -924,10 +939,13 @@ class WeekheatCard extends Base {
     if (!n.active) chips.push(`<span class="chip paused">${esc(t.paused)}</span>`);
     if (n.unavailable) chips.push(`<span class="chip bad">${esc(t.unavailable)}</span>`);
     if (n.manual && n.active) chips.push(`<span class="chip manual">${esc(t.manual)}</span>`);
+    if (n.windowOpen) chips.push(`<span class="chip window">${esc(t.window_open)}</span>`);
     let line = '';
     if (n.at) {
       const until = n.at.next ? `${t.until} ${fromMin(n.at.next.start)}, ${t.then} ${fmtTemp(n.at.next, this._lang)}` : `${t.until} ${t.tomorrow_l}`;
-      line = n.manual && n.active
+      line = n.windowOpen
+        ? `${t.window_open}: ${fmtTemp(OFF_T, this._lang)} · ${t.plan} ${fmtTemp(n.at.period, this._lang)}`
+        : n.manual && n.active
         ? `${t.manual}: ${fmtTemp(n.target, this._lang)} ${n.at.next ? `${t.until} ${fromMin(n.at.next.start)}` : ''} · ${t.plan} ${fmtTemp(n.at.period, this._lang)}`
         : `${fmtTemp(n.at.period, this._lang)} ${until}`;
     }
@@ -987,8 +1005,8 @@ class WeekheatCard extends Base {
       parts.push(`<circle cx="${hx.toFixed(2)}" cy="${hy.toFixed(2)}" r="9" class="dhandle${v <= OFF_T ? ' off' : ''}"/>`);
     }
     const off = v != null && v <= OFF_T;
-    const status = !n.active ? t.paused : n.manual ? t.manual : n.heating ? t.heating : t.scheduled;
-    const cls = !n.active ? 'dim' : n.manual ? 'manual' : n.heating ? 'heat' : 'dim';
+    const status = !n.active ? t.paused : n.windowOpen ? t.window_open : n.manual ? t.manual : n.heating ? t.heating : t.scheduled;
+    const cls = !n.active ? 'dim' : n.windowOpen ? 'window' : n.manual ? 'manual' : n.heating ? 'heat' : 'dim';
     const big = v == null ? '–' : off ? t.off : Number(v).toLocaleString(this._lang === 'de' ? 'de-AT' : 'en-GB', { maximumFractionDigits: 1 });
     const cur = n.current != null ? `${t.current} ${fmtTemp(Math.round(n.current * 10) / 10, this._lang)}` : '';
     const heat = n.heating && cls !== 'heat' ? `<tspan class="heat"> · ${esc(t.heating)}</tspan>` : '';
@@ -1053,9 +1071,16 @@ class WeekheatCard extends Base {
     const t = this._t;
     const d = this._draftFor(room);
     const climates = Object.values(this._hass.states).filter((s) => s.entity_id.startsWith('climate.'));
+    const contacts = Object.values(this._hass.states).filter((s) => d.windows.includes(s.entity_id)
+      || (s.entity_id.startsWith('binary_sensor.') && WINDOW_CLASSES.includes(s.attributes.device_class)))
+      .sort((a, b) => String(a.attributes.friendly_name).localeCompare(String(b.attributes.friendly_name)));
     return `<div class="panel"><label class="field">${esc(t.name)} <input data-c="r-name" value="${esc(d.name)}"></label>
       <div class="field">${esc(t.thermostats)}</div>
       ${climates.map((s) => `<label class="check"><input type="checkbox" data-c="r-th" data-v="${s.entity_id}" ${d.thermostats.includes(s.entity_id) ? 'checked' : ''}> ${esc(s.attributes.friendly_name || s.entity_id)}</label>`).join('')}
+      <div class="field">${esc(t.windows)}</div>
+      ${contacts.map((s) => `<label class="check"><input type="checkbox" data-c="r-win" data-v="${s.entity_id}" ${d.windows.includes(s.entity_id) ? 'checked' : ''}> ${esc(s.attributes.friendly_name || s.entity_id)}</label>`).join('')}
+      <label class="field">${esc(t.window_delay)} <input type="number" inputmode="numeric" min="0" max="900" step="5" data-c="r-delay" value="${esc(d.window_delay)}"></label>
+      <div class="dim small">${esc(t.window_help)}</div>
       <div class="actions"><span class="grow"></span><button class="btn small" data-a="save-room">${esc(t.save)}</button></div></div>`;
   }
 
@@ -1144,6 +1169,8 @@ const STYLE = `
   .chip { font-size: .72em; padding: 1px 6px; border-radius: 8px; margin-left: 4px; vertical-align: middle; font-weight: 400; }
   .chip.paused { background: var(--secondary-background-color); color: var(--secondary-text-color); }
   .chip.manual { background: color-mix(in srgb, var(--wh-manual) 25%, transparent); }
+  .chip.window { background: color-mix(in srgb, var(--state-climate-cool-color, #2b9af9) 22%, transparent); }
+  .dstatus.window { fill: var(--state-climate-cool-color, #2b9af9) !important; }
   .chip.bad { background: color-mix(in srgb, var(--wh-bad) 25%, transparent); }
   .ctrl { display: flex; align-items: center; gap: 12px; margin: 10px 0 6px; }
   .round { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--divider-color); background: none; color: var(--primary-text-color); font-size: 1.3em; cursor: pointer; }

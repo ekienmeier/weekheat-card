@@ -20,7 +20,7 @@ Assistant, modelled on [Temperate](https://github.com/xman2000/temperate-card):
 - Runs entirely inside HA (a script, automations, helpers). The card edits and shows; nothing depends
   on a dashboard being open.
 
-Not in scope for now: heat/cool, external room sensors, open-window handling, presence.
+Not in scope for now: heat/cool, external room sensors, presence. Open windows: see *Windows and doors*.
 
 ## Parts
 
@@ -179,6 +179,7 @@ Consequences:
   wanted value changed.
 - Midnight (00:00:05), so a new day's plan choice is applied even where no block boundary falls there.
 - Home Assistant start.
+- A window or door sensor open for the window delay, or closed again.
 - Manual run (`automation.trigger`), used by the card after an exception for today or the week changed.
 
 ### Writes and failures
@@ -196,7 +197,33 @@ wanted temperature and when:
 {"climate.x": [21, "2026-11-13T06:00"], "climate.y": [21, "2026-11-13T06:00"]}
 ```
 
-Enough for 3–4 thermostats per room.
+Enough for 3–4 thermostats per room. While a window is open it also holds `"_open"`: the setpoints to
+restore, as a list in thermostat order (a list rather than a map to stay within 255 characters).
+
+### Windows and doors
+
+Replaces the Aqara hub's "window open → thermostat off" linkage, which is gone with the on-device
+schedules. Per room: any number of window/door sensors (`binary_sensor` with device class window,
+door, opening or garage door; `input_boolean` for tests) and a delay (default 30 s, 0–900).
+
+Each run is in one of four modes:
+
+| Mode | When | What it does |
+|---|---|---|
+| open | a sensor has been open for the delay, nothing saved yet | saves each thermostat's setpoint in `_open`, sets 5 °C |
+| hold | still open | writes nothing; a period with a different temperature replaces the saved value (and `applied`), so closing restores the new period |
+| restore | all closed, `_open` saved | writes the saved values back, removes `_open` |
+| plan | otherwise | the normal rule |
+
+So a manual setpoint from before the window opened comes back when it closes, unless a new period
+began meanwhile. A thermostat that was off when the window opened stays off. One that was unavailable
+is turned down when it comes back while the window is still open. Opening shorter than the delay does
+nothing. A paused room does not react to windows. Changes made by hand while the window is open are
+overwritten when it closes.
+
+Tested 2026-11-13 on a copy of the blueprint with the bedroom thermostat and an `input_boolean` as the
+window: opening and closing, the delay, a manual value restored, a new period while open, a short
+opening ignored (16 checks).
 
 ### Home Assistant down
 

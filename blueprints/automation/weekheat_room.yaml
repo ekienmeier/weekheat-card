@@ -7,6 +7,10 @@ blueprint:
     days, the free-day plan is used on free days. The thermostats are written
     only when the scheduled temperature changes, so a change made by hand holds
     until the next period with a different temperature.
+    Optional window and door sensors: while one is open (for the delay), the
+    thermostats are set to 5 °C; when all are closed again, the setpoints from
+    before are restored, or the plan's temperature if a period with a different
+    temperature began in between.
     Pairs with the Weekheat card (custom:weekheat-card).
   domain: automation
   source_url: https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/automation/weekheat_room.yaml
@@ -50,6 +54,26 @@ blueprint:
         entity:
           filter:
             - domain: schedule
+    windows:
+      name: Window and door sensors
+      description: While one of them is open, the room's thermostats are set to 5 °C.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: binary_sensor
+              device_class: [window, door, opening, garage_door]
+            - domain: input_boolean
+    window_delay:
+      name: Window delay
+      description: How long a window or door must be open before the heating turns down.
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 900
+          unit_of_measurement: seconds
     state:
       name: State helper
       description: An input_text (max 255) where the automation keeps what it last applied.
@@ -95,6 +119,8 @@ variables:
   day_script: !input day_script
   settle_time: !input settle_time
   language: !input language
+  windows: !input windows
+  window_delay: !input window_delay
 
 triggers:
   - trigger: state
@@ -113,6 +139,16 @@ triggers:
   - trigger: homeassistant
     event: start
     id: start
+  - trigger: state
+    entity_id: !input windows
+    to: "on"
+    for:
+      seconds: !input window_delay
+    id: window
+  - trigger: state
+    entity_id: !input windows
+    from: "on"
+    id: window
 
 actions:
   - action: "{{ day_script }}"
@@ -142,57 +178,159 @@ actions:
         {{ s | from_json if s.startswith('{') else {} }}
       stamp: "{{ now().strftime('%Y-%m-%dT%H:%M') }}"
       late: []
+      targets: []
+      th_list: "{{ [thermostats] if thermostats is string else thermostats | list }}"
+      win_list: "{{ [windows] if windows is string else (windows or []) | list }}"
+      # A window counts as open once it has been open for the delay.
+      open_now: >-
+        {%- set ns = namespace(o=false) -%}
+        {%- for w in win_list if is_state(w, 'on') -%}
+          {%- if (now() - states[w].last_changed).total_seconds() >= (window_delay | float(0)) - 1 -%}{%- set ns.o = true -%}{%- endif -%}
+        {%- endfor -%}
+        {{ ns.o }}
+      saved: "{{ applied.get('_open') }}"
+      mode: >-
+        {%- if open_now -%}{{ 'hold' if saved is list else 'open' }}
+        {%- else -%}{{ 'restore' if saved is list else 'plan' }}{%- endif -%}
 
-  # Nothing scheduled right now (a gap between blocks, or the plan is missing): leave everything alone.
-  - condition: template
-    value_template: "{{ wanted is number }}"
+  # Window opened: remember the setpoints (in thermostat order) and turn down.
+  - if:
+      - condition: template
+        value_template: "{{ mode == 'open' }}"
+    then:
+      - variables:
+          saved: >-
+            {%- set ns = namespace(l=[]) -%}
+            {%- for th in th_list -%}
+              {%- set t = state_attr(th, 'temperature') -%}
+              {%- set ns.l = ns.l + [t | float if states(th) not in ['off', 'unavailable', 'unknown'] and t is number else none] -%}
+            {%- endfor -%}
+            {{ ns.l }}
+          applied: "{{ dict(applied, _open=saved) }}"
+          targets: >-
+            {%- set ns = namespace(l=[]) -%}
+            {%- for th in th_list -%}
+              {%- if saved[loop.index0] is number and saved[loop.index0] > 5.05 -%}{%- set ns.l = ns.l + [[th, 5]] -%}{%- endif -%}
+            {%- endfor -%}
+            {{ ns.l }}
+
+  # Window still open: write nothing, but let a new period's temperature replace what will be restored.
+  - if:
+      - condition: template
+        value_template: "{{ mode == 'hold' }}"
+    then:
+      - variables:
+          news: >-
+            {%- set ns = namespace(a={}, s=[]) -%}
+            {%- for th in th_list -%}
+              {%- set last = (applied.get(th) or [none])[0] -%}
+              {%- set old = saved[loop.index0] if loop.index0 < saved | length else none -%}
+              {%- if wanted is number and (last is not number or (last - wanted) | abs >= 0.05) -%}
+                {%- set ns.a = dict(ns.a, **{th: [wanted, stamp]}) -%}{%- set ns.s = ns.s + [wanted] -%}
+              {%- else -%}{%- set ns.s = ns.s + [old] -%}{%- endif -%}
+            {%- endfor -%}
+            {{ {'a': ns.a, 's': ns.s} }}
+          applied: "{{ dict(applied, _open=news.s, **news.a) }}"
+          # A thermostat that was unavailable when the window opened: turn it down now that it is back.
+          targets: >-
+            {%- set ns = namespace(l=[]) -%}
+            {%- for th in th_list -%}
+              {%- set t = state_attr(th, 'temperature') -%}
+              {%- if trigger.id == 'back' and trigger.entity_id == th and states(th) != 'off' and t is number and t > 5.05 -%}
+                {%- set ns.l = ns.l + [[th, 5]] -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {{ ns.l }}
+
+  # All windows closed: restore.
+  - if:
+      - condition: template
+        value_template: "{{ mode == 'restore' }}"
+    then:
+      - variables:
+          targets: >-
+            {%- set ns = namespace(l=[]) -%}
+            {%- for th in th_list -%}
+              {%- set v = saved[loop.index0] if loop.index0 < saved | length else none -%}
+              {%- if v is number -%}{%- set ns.l = ns.l + [[th, v]] -%}{%- endif -%}
+            {%- endfor -%}
+            {{ ns.l }}
+          applied: "{{ dict(applied.items() | rejectattr(0, 'eq', '_open') | list) }}"
+
+  # Normal run: write the plan's temperature where it changed.
+  - if:
+      - condition: template
+        value_template: "{{ mode == 'plan' }}"
+    then:
+      # Nothing scheduled right now (a gap between blocks, or the plan is missing): leave everything alone.
+      - condition: template
+        value_template: "{{ wanted is number }}"
+      - variables:
+          targets: >-
+            {%- set ns = namespace(l=[]) -%}
+            {%- for th in th_list -%}
+              {%- set last = (applied.get(th) or [none])[0] -%}
+              {%- if last is not number or (last - wanted) | abs >= 0.05 -%}{%- set ns.l = ns.l + [[th, wanted]] -%}{%- endif -%}
+            {%- endfor -%}
+            {{ ns.l }}
+
+  # Window states are saved before writing, so the card shows them at once.
+  - if:
+      - condition: template
+        value_template: "{{ mode != 'plan' and (applied | to_json) != states(state_entity) }}"
+    then:
+      - action: input_text.set_value
+        target:
+          entity_id: !input state
+        data:
+          value: "{{ applied | to_json }}"
 
   - repeat:
-      for_each: "{{ [thermostats] if thermostats is string else thermostats | list }}"
+      for_each: "{{ targets }}"
       sequence:
         - variables:
-            last: "{{ (applied.get(repeat.item) or [none])[0] }}"
+            th: "{{ repeat.item[0] }}"
+            temp: "{{ repeat.item[1] | float }}"
+            last: "{{ (applied.get(th) or [none])[0] }}"
         - if:
             - condition: template
-              value_template: >-
-                {{ states(repeat.item) not in ['unavailable', 'unknown']
-                   and (last is not number or (last - wanted) | abs >= 0.05) }}
+              value_template: "{{ states(th) not in ['unavailable', 'unknown'] }}"
           then:
             # Switch an off thermostat on first: set_temperature's hvac_mode is ignored by some
             # integrations (seen with HomeKit Controller: the setpoint is taken, the mode stays off).
             - if:
                 - condition: template
-                  value_template: "{{ is_state(repeat.item, 'off') }}"
+                  value_template: "{{ is_state(th, 'off') }}"
               then:
                 - action: climate.set_hvac_mode
                   continue_on_error: true
                   target:
-                    entity_id: "{{ repeat.item }}"
+                    entity_id: "{{ th }}"
                   data:
                     hvac_mode: heat
-                - wait_template: "{{ not is_state(repeat.item, 'off') }}"
+                - wait_template: "{{ not is_state(th, 'off') }}"
                   timeout:
                     seconds: "{{ settle_time }}"
                   continue_on_timeout: true
             - action: climate.set_temperature
               continue_on_error: true
               target:
-                entity_id: "{{ repeat.item }}"
+                entity_id: "{{ th }}"
               data:
-                temperature: "{{ wanted }}"
+                temperature: "{{ temp }}"
             - wait_template: >-
-                {{ (state_attr(repeat.item, 'temperature') | float(-100) - wanted) | abs < 0.25
-                   and not is_state(repeat.item, 'off') }}
+                {{ (state_attr(th, 'temperature') | float(-100) - temp) | abs < 0.25
+                   and not is_state(th, 'off') }}
               timeout:
                 seconds: "{{ settle_time }}"
               continue_on_timeout: true
             - if:
                 - condition: template
-                  value_template: "{{ wait.completed }}"
+                  value_template: "{{ wait.completed and mode == 'plan' }}"
               then:
                 - variables:
-                    applied: "{{ dict(applied, **{repeat.item: [wanted, stamp]}) }}"
-                    late: "{{ late + [state_attr(repeat.item, 'friendly_name') or repeat.item] if trigger.id == 'start' and last is number else late }}"
+                    applied: "{{ dict(applied, **{th: [temp, stamp]}) }}"
+                    late: "{{ late + [state_attr(th, 'friendly_name') or th] if trigger.id == 'start' and last is number else late }}"
 
   - if:
       - condition: template
