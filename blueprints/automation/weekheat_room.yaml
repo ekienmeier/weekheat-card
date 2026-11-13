@@ -1,0 +1,220 @@
+blueprint:
+  name: Weekheat room
+  description: >-
+    Heats a room by its day plans. Each plan is a schedule helper whose blocks
+    carry a temperature. The Weekheat day script says whether today is a working
+    day or a free day (or names a plan); the week picks the plan for working
+    days, the free-day plan is used on free days. The thermostats are written
+    only when the scheduled temperature changes, so a change made by hand holds
+    until the next period with a different temperature.
+    Pairs with the Weekheat card (custom:weekheat-card).
+  domain: automation
+  source_url: https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/automation/weekheat_room.yaml
+  input:
+    room_name:
+      name: Room name
+      selector:
+        text: {}
+    thermostats:
+      name: Thermostats
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: climate
+    plans:
+      name: Plans
+      description: The room's day plans (schedule helpers).
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: schedule
+    week:
+      name: Week
+      description: The plan for a working day on each weekday. A day left empty uses the first plan.
+      default: {}
+      selector:
+        object:
+          fields:
+            mon: {label: Monday, selector: {entity: {filter: [{domain: schedule}]}}}
+            tue: {label: Tuesday, selector: {entity: {filter: [{domain: schedule}]}}}
+            wed: {label: Wednesday, selector: {entity: {filter: [{domain: schedule}]}}}
+            thu: {label: Thursday, selector: {entity: {filter: [{domain: schedule}]}}}
+            fri: {label: Friday, selector: {entity: {filter: [{domain: schedule}]}}}
+            sat: {label: Saturday (only if made a working day), selector: {entity: {filter: [{domain: schedule}]}}}
+            sun: {label: Sunday (only if made a working day), selector: {entity: {filter: [{domain: schedule}]}}}
+    free_day:
+      name: Free-day plan
+      selector:
+        entity:
+          filter:
+            - domain: schedule
+    state:
+      name: State helper
+      description: An input_text (max 255) where the automation keeps what it last applied.
+      selector:
+        entity:
+          filter:
+            - domain: input_text
+    day_script:
+      name: Day script
+      default: script.weekheat_day
+      selector:
+        entity:
+          filter:
+            - domain: script
+    settle_time:
+      name: Settle time
+      description: How long to wait for a thermostat to confirm a new setpoint.
+      default: 30
+      selector:
+        number:
+          min: 5
+          max: 300
+          unit_of_measurement: seconds
+    language:
+      name: Notification language
+      default: en
+      selector:
+        select:
+          options:
+            - {value: en, label: English}
+            - {value: de, label: Deutsch}
+
+mode: queued
+max: 10
+
+variables:
+  room_name: !input room_name
+  thermostats: !input thermostats
+  plans: !input plans
+  week: !input week
+  free_day: !input free_day
+  state_entity: !input state
+  day_script: !input day_script
+  settle_time: !input settle_time
+  language: !input language
+
+triggers:
+  - trigger: state
+    entity_id: !input plans
+    id: plan
+  - trigger: state
+    entity_id: !input thermostats
+    from: unavailable
+    id: back
+  - trigger: time
+    at: "00:00:05"
+    id: midnight
+  - trigger: time_pattern
+    minutes: /15
+    id: tick
+  - trigger: homeassistant
+    event: start
+    id: start
+
+actions:
+  - action: "{{ day_script }}"
+    response_variable: day_info
+  - variables:
+      day: "{{ day_info.days[0] }}"
+      plan_list: "{{ [plans] if plans is string else plans | list }}"
+      named_plan: >-
+        {%- set ns = namespace(p=none) -%}
+        {%- if day.plan -%}
+          {%- set want = day.plan | lower -%}{%- set slug = day.plan | slugify -%}
+          {%- for p in plan_list if ns.p is none -%}
+            {%- set fn = (state_attr(p, 'friendly_name') or '') | lower -%}
+            {%- if p.endswith('_' ~ slug) or fn == want or fn.endswith(' ' ~ want) -%}{%- set ns.p = p -%}{%- endif -%}
+          {%- endfor -%}
+        {%- endif -%}
+        {{ ns.p or '' }}
+      plan: >-
+        {%- if named_plan -%}{{ named_plan }}
+        {%- elif day.free -%}{{ free_day }}
+        {%- else -%}{{ (week or {}).get(day.weekday) or plan_list[0] }}{%- endif -%}
+      wanted: >-
+        {%- set t = state_attr(plan, 'temperature') -%}
+        {{ t | float if is_state(plan, 'on') and t is number else none }}
+      applied: >-
+        {%- set s = states(state_entity) -%}
+        {{ s | from_json if s.startswith('{') else {} }}
+      stamp: "{{ now().strftime('%Y-%m-%dT%H:%M') }}"
+      late: []
+
+  # Nothing scheduled right now (a gap between blocks, or the plan is missing): leave everything alone.
+  - condition: template
+    value_template: "{{ wanted is number }}"
+
+  - repeat:
+      for_each: "{{ [thermostats] if thermostats is string else thermostats | list }}"
+      sequence:
+        - variables:
+            last: "{{ (applied.get(repeat.item) or [none])[0] }}"
+        - if:
+            - condition: template
+              value_template: >-
+                {{ states(repeat.item) not in ['unavailable', 'unknown']
+                   and (last is not number or (last - wanted) | abs >= 0.05) }}
+          then:
+            - if:
+                - condition: template
+                  value_template: "{{ is_state(repeat.item, 'off') }}"
+              then:
+                - action: climate.set_temperature
+                  continue_on_error: true
+                  target:
+                    entity_id: "{{ repeat.item }}"
+                  data:
+                    temperature: "{{ wanted }}"
+                    hvac_mode: heat
+              else:
+                - action: climate.set_temperature
+                  continue_on_error: true
+                  target:
+                    entity_id: "{{ repeat.item }}"
+                  data:
+                    temperature: "{{ wanted }}"
+            - wait_template: >-
+                {{ (state_attr(repeat.item, 'temperature') | float(-100) - wanted) | abs < 0.25
+                   and not is_state(repeat.item, 'off') }}
+              timeout:
+                seconds: "{{ settle_time }}"
+              continue_on_timeout: true
+            - if:
+                - condition: template
+                  value_template: "{{ wait.completed }}"
+              then:
+                - variables:
+                    applied: "{{ dict(applied, **{repeat.item: [wanted, stamp]}) }}"
+                    late: "{{ late + [state_attr(repeat.item, 'friendly_name') or repeat.item] if trigger.id == 'start' and last is number else late }}"
+
+  - if:
+      - condition: template
+        value_template: "{{ (applied | to_json) != states(state_entity) }}"
+    then:
+      - action: input_text.set_value
+        target:
+          entity_id: !input state
+        data:
+          value: "{{ applied | to_json }}"
+
+  # Home Assistant was not running when the period started: say so.
+  - if:
+      - condition: template
+        value_template: "{{ late | length > 0 }}"
+    then:
+      - action: persistent_notification.create
+        data:
+          notification_id: "weekheat_{{ room_name | slugify }}_late"
+          title: "Weekheat: {{ room_name }}"
+          message: >-
+            {%- set t = wanted | string ~ ' °C' -%}
+            {%- if language == 'de' -%}
+              {{ t }} wurde erst um {{ now().strftime('%H:%M') }} eingestellt ({{ late | join(', ') }}):
+              Home Assistant lief nicht, als die Periode begann.
+            {%- else -%}
+              {{ t }} was only set at {{ now().strftime('%H:%M') }} ({{ late | join(', ') }}):
+              Home Assistant was not running when the period started.
+            {%- endif -%}
