@@ -2,7 +2,7 @@
 // Pairs with the Weekheat blueprints (weekheat_day script, weekheat_room automation).
 // The first part (exported) is plain logic without DOM, tested in tests/logic.test.mjs.
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.4.0';
 export const WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const SCHEDULE_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 export const ROOM_BLUEPRINT = 'weekheat_room.yaml';
@@ -209,7 +209,7 @@ export const I18N = {
     new_room_paused: 'Neue Räume starten pausiert: Pläne prüfen, dann aktivieren.',
     late: 'Verspätet', dismiss: 'Ausblenden', reason_weekend: 'Wochenende',
     heating: 'Heizt', scheduled: 'Nach Plan', current: 'Raum', layout_dial: 'Regler', layout_compact: 'Kompakt',
-    setpoint: 'Solltemperatur', window_open: 'Fenster offen', windows: 'Fenster- und Türkontakte',
+    setpoint: 'Solltemperatur', heating_off: 'Aus', heating_l: 'Heizung', turn_on: 'Heizung einschalten', turn_off: 'Heizung ausschalten', window_open: 'Fenster offen', windows: 'Fenster- und Türkontakte',
     window_delay: 'Verzögerung (Sekunden)',
     window_help: 'Ist einer davon so lange offen, werden die Thermostate auf 5 °C gestellt; sind alle wieder zu, gilt wieder der Wert von vorher (oder der Plan, falls inzwischen eine neue Periode begann).',
   },
@@ -239,7 +239,7 @@ export const I18N = {
     new_room_paused: 'New rooms start paused: check the plans, then activate.',
     late: 'Late', dismiss: 'Dismiss', reason_weekend: 'Weekend',
     heating: 'Heating', scheduled: 'Scheduled', current: 'Room', layout_dial: 'Dial', layout_compact: 'Compact',
-    setpoint: 'Setpoint', window_open: 'Window open', windows: 'Window and door sensors',
+    setpoint: 'Setpoint', heating_off: 'Off', heating_l: 'heating', turn_on: 'Turn heating on', turn_off: 'Turn heating off', window_open: 'Window open', windows: 'Window and door sensors',
     window_delay: 'Delay (seconds)',
     window_help: 'When one of them has been open this long, the thermostats are set to 5 °C; when all are closed again, the value from before applies again (or the plan, if a new period began in between).',
   },
@@ -374,7 +374,7 @@ class WeekheatCard extends Base {
           const list = (v) => (Array.isArray(v) ? v : v ? [v] : []);
           return { entity, id, cfg: c, name: i.room_name || c.alias, thermostats: list(i.thermostats), plans: list(i.plans),
             week: i.week || {}, free_day: i.free_day, state: i.state, windows: list(i.windows),
-            window_delay: i.window_delay ?? 30 };
+            window_delay: i.window_delay ?? 30, heating_switch: (Array.isArray(i.heating_switch) ? i.heating_switch[0] : i.heating_switch) || null };
         });
       const order = this._config.rooms;
       if (Array.isArray(order) && order.length) rooms = order.map((e) => rooms.find((r) => r.entity === e || r.id === e)).filter(Boolean);
@@ -429,7 +429,7 @@ class WeekheatCard extends Base {
     const h = this._hass;
     if (!h || !this._rooms) return '';
     const ids = new Set();
-    for (const r of this._rooms) { ids.add(r.entity); r.thermostats.forEach((t) => ids.add(t)); r.plans.forEach((p) => ids.add(p)); (r.windows || []).forEach((w) => ids.add(w)); if (r.state) ids.add(r.state); }
+    for (const r of this._rooms) { ids.add(r.entity); r.thermostats.forEach((t) => ids.add(t)); r.plans.forEach((p) => ids.add(p)); (r.windows || []).forEach((w) => ids.add(w)); if (r.state) ids.add(r.state); if (r.heating_switch) ids.add(r.heating_switch); }
     return [...ids].map((e) => h.states[e]?.last_updated).join('|');
   }
 
@@ -466,9 +466,10 @@ class WeekheatCard extends Base {
     let saved = null;
     try { saved = JSON.parse(h.states[room.state]?.state || '{}')._open || null; } catch (e) { /* not JSON */ }
     const openWin = (room.windows || []).filter((w) => h.states[w]?.state === 'on');
-    const windowOpen = !!saved && h.states[room.entity]?.state === 'on';
-    const manual = !windowOpen && wanted != null && avail.some((s) => s.state === 'off' || Math.abs((s.attributes.temperature ?? -99) - wanted) >= 0.25);
-    return { windowOpen, openWin, plan, periods, at, wanted, current: cur.length ? cur.reduce((a, b) => a + b, 0) / cur.length : null, target,
+    const heatingOff = !!room.heating_switch && h.states[room.heating_switch]?.state === 'off';
+    const windowOpen = !heatingOff && !!saved && h.states[room.entity]?.state === 'on';
+    const manual = !heatingOff && !windowOpen && wanted != null && avail.some((s) => s.state === 'off' || Math.abs((s.attributes.temperature ?? -99) - wanted) >= 0.25);
+    return { heatingOff, windowOpen, openWin, plan, periods, at, wanted, current: cur.length ? cur.reduce((a, b) => a + b, 0) / cur.length : null, target,
       unavailable: th.length - avail.length, off: avail.some((s) => s.state === 'off'), manual,
       active: h.states[room.entity]?.state === 'on', step: avail[0]?.attributes.target_temp_step || 0.5,
       heating: avail.some((s) => s.attributes.hvac_action === 'heating') };
@@ -499,7 +500,31 @@ class WeekheatCard extends Base {
     Object.assign(room, { week: cfg.use_blueprint.input.week || {}, plans: cfg.use_blueprint.input.plans,
       free_day: cfg.use_blueprint.input.free_day, thermostats: cfg.use_blueprint.input.thermostats,
       name: cfg.use_blueprint.input.room_name, windows: cfg.use_blueprint.input.windows || [],
-      window_delay: cfg.use_blueprint.input.window_delay ?? 30 });
+      window_delay: cfg.use_blueprint.input.window_delay ?? 30, heating_switch: cfg.use_blueprint.input.heating_switch || null });
+  }
+
+  /** Switch the room's heating on or off; creates the switch (an input_boolean) on first use. */
+  async _togglePower(room) {
+    const h = this._hass;
+    let sw = room.heating_switch;
+    if (!sw || !h.states[sw]) {
+      if (!this._admin) throw new Error('no heating switch');
+      sw = await this._createSwitch(room.name);
+      await this._saveRoomConfig(room, { heating_switch: sw });
+      await new Promise((r) => setTimeout(r, 1500)); // the automation reloads with the new trigger
+      await h.callService('input_boolean', 'turn_off', { entity_id: sw });
+      return;
+    }
+    await h.callService('input_boolean', h.states[sw].state === 'off' ? 'turn_on' : 'turn_off', { entity_id: sw });
+  }
+
+  async _createSwitch(name) {
+    const h = this._hass;
+    const it = await h.callWS({ type: 'input_boolean/create', name: `Weekheat ${name} ${this._t.heating_l}`, icon: 'mdi:radiator', initial: true });
+    const sw = `input_boolean.${it.id}`;
+    for (let i = 0; i < 20 && !h.states[sw]; i++) await new Promise((r) => setTimeout(r, 250));
+    if (this._hass.states[sw]?.state !== 'on') await h.callService('input_boolean', 'turn_on', { entity_id: sw });
+    return sw;
   }
 
   async _poke(rooms = this._rooms) {
@@ -568,7 +593,8 @@ class WeekheatCard extends Base {
     const free = await this._createPlan(name, t.free_day, STARTER.free);
     const st = await h.callWS({ type: 'input_text/create', name: `Weekheat ${name} state`, max: 255, icon: 'mdi:database' });
     const stateEntity = `input_text.${st.id}`;
-    const input = { room_name: name, thermostats, plans: [weekday, free], free_day: free,
+    const heatingSwitch = await this._createSwitch(name);
+    const input = { room_name: name, thermostats, plans: [weekday, free], free_day: free, heating_switch: heatingSwitch,
       week: Object.fromEntries(WEEK.map((d) => [d, weekday])), state: stateEntity,
       day_script: this._config.day_script, language: this._lang };
     // Created paused: initial_state false first, switched off, then saved again without it.
@@ -723,6 +749,10 @@ class WeekheatCard extends Base {
         this._layout = this._layout === 'dial' ? 'compact' : 'dial';
         try { localStorage.setItem('weekheat-layout', this._layout); } catch (e) { /* no storage */ }
         break;
+      }
+      case 'power': {
+        this._run(() => this._togglePower(room), false);
+        return;
       }
       case 'active': {
         const on = this._hass.states[room.entity]?.state === 'on';
@@ -940,10 +970,13 @@ class WeekheatCard extends Base {
     if (n.unavailable) chips.push(`<span class="chip bad">${esc(t.unavailable)}</span>`);
     if (n.manual && n.active) chips.push(`<span class="chip manual">${esc(t.manual)}</span>`);
     if (n.windowOpen) chips.push(`<span class="chip window">${esc(t.window_open)}</span>`);
+    if (n.heatingOff) chips.push(`<span class="chip paused">${esc(t.heating_off)}</span>`);
     let line = '';
     if (n.at) {
       const until = n.at.next ? `${t.until} ${fromMin(n.at.next.start)}, ${t.then} ${fmtTemp(n.at.next, this._lang)}` : `${t.until} ${t.tomorrow_l}`;
-      line = n.windowOpen
+      line = n.heatingOff
+        ? `${t.heating_off}: ${fmtTemp(OFF_T, this._lang)} · ${t.plan} ${fmtTemp(n.at.period, this._lang)}`
+        : n.windowOpen
         ? `${t.window_open}: ${fmtTemp(OFF_T, this._lang)} · ${t.plan} ${fmtTemp(n.at.period, this._lang)}`
         : n.manual && n.active
         ? `${t.manual}: ${fmtTemp(n.target, this._lang)} ${n.at.next ? `${t.until} ${fromMin(n.at.next.start)}` : ''} · ${t.plan} ${fmtTemp(n.at.period, this._lang)}`
@@ -951,7 +984,7 @@ class WeekheatCard extends Base {
     }
     const head = `<div class="rhead" data-a="toggle">
       <div class="rname">${esc(room.name)} ${chips.join('')}</div>
-      <div class="rtemp">${n.current != null ? fmtTemp(Math.round(n.current * 10) / 10, this._lang) : '–'}${n.heating ? ' <span class="flame">▲</span>' : ''}</div>
+      <div class="rtemp"><button class="power ${n.heatingOff ? '' : 'on'}" data-a="power" title="${esc(n.heatingOff ? t.turn_on : t.turn_off)}" aria-label="${esc(n.heatingOff ? t.turn_on : t.turn_off)}" ${!room.heating_switch && !this._admin ? 'disabled' : ''}>⏻</button>${n.current != null ? fmtTemp(Math.round(n.current * 10) / 10, this._lang) : '–'}${n.heating ? ' <span class="flame">▲</span>' : ''}</div>
       <div class="rline dim">${esc(line)}</div></div>`;
     if (!open) return `<div class="room" data-room="${room.id}">${head}</div>`;
     const now = this._now();
@@ -1005,8 +1038,8 @@ class WeekheatCard extends Base {
       parts.push(`<circle cx="${hx.toFixed(2)}" cy="${hy.toFixed(2)}" r="9" class="dhandle${v <= OFF_T ? ' off' : ''}"/>`);
     }
     const off = v != null && v <= OFF_T;
-    const status = !n.active ? t.paused : n.windowOpen ? t.window_open : n.manual ? t.manual : n.heating ? t.heating : t.scheduled;
-    const cls = !n.active ? 'dim' : n.windowOpen ? 'window' : n.manual ? 'manual' : n.heating ? 'heat' : 'dim';
+    const status = !n.active ? t.paused : n.heatingOff ? t.heating_off : n.windowOpen ? t.window_open : n.manual ? t.manual : n.heating ? t.heating : t.scheduled;
+    const cls = !n.active ? 'dim' : n.heatingOff ? 'dim' : n.windowOpen ? 'window' : n.manual ? 'manual' : n.heating ? 'heat' : 'dim';
     const big = v == null ? '–' : off ? t.off : Number(v).toLocaleString(this._lang === 'de' ? 'de-AT' : 'en-GB', { maximumFractionDigits: 1 });
     const cur = n.current != null ? `${t.current} ${fmtTemp(Math.round(n.current * 10) / 10, this._lang)}` : '';
     const heat = n.heating && cls !== 'heat' ? `<tspan class="heat"> · ${esc(t.heating)}</tspan>` : '';
@@ -1165,6 +1198,9 @@ const STYLE = `
   .rname { font-weight: 500; }
   .rtemp { font-size: 1.15em; text-align: right; }
   .rline { grid-column: 1 / -1; font-size: .9em; }
+  .power { border: 1px solid var(--divider-color); background: none; color: var(--secondary-text-color); width: 28px; height: 28px; border-radius: 50%; margin-right: 10px; cursor: pointer; font-size: .85em; vertical-align: middle; padding: 0; }
+  .power.on { color: var(--state-climate-heat-color, #ff8a50); border-color: color-mix(in srgb, var(--state-climate-heat-color, #ff8a50) 50%, transparent); }
+  .power[disabled] { opacity: .4; cursor: default; }
   .flame { color: var(--state-climate-heat-color, #ff8a50); font-size: .7em; }
   .chip { font-size: .72em; padding: 1px 6px; border-radius: 8px; margin-left: 4px; vertical-align: middle; font-weight: 400; }
   .chip.paused { background: var(--secondary-background-color); color: var(--secondary-text-color); }

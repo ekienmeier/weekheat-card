@@ -11,6 +11,8 @@ blueprint:
     thermostats are set to 5 °C; when all are closed again, the setpoints from
     before are restored, or the plan's temperature if a period with a different
     temperature began in between.
+    Optional heating switch (an input_boolean): while it is off, the thermostats
+    are held at 5 °C and windows are ignored; switched on, the plan applies again.
     Pairs with the Weekheat card (custom:weekheat-card).
   domain: automation
   source_url: https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/automation/weekheat_room.yaml
@@ -74,6 +76,15 @@ blueprint:
           min: 0
           max: 900
           unit_of_measurement: seconds
+    heating_switch:
+      name: Heating switch
+      description: >-
+        Optional input_boolean. Off holds the thermostats at 5 °C; on lets the plan heat again.
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
     state:
       name: State helper
       description: An input_text (max 255) where the automation keeps what it last applied.
@@ -121,6 +132,7 @@ variables:
   language: !input language
   windows: !input windows
   window_delay: !input window_delay
+  heating_switch: !input heating_switch
 
 triggers:
   - trigger: state
@@ -149,6 +161,10 @@ triggers:
     entity_id: !input windows
     from: "on"
     id: window
+  - trigger: state
+    entity_id: !input heating_switch
+    to: ["on", "off"]
+    id: switch
 
 actions:
   - action: "{{ day_script }}"
@@ -189,24 +205,34 @@ actions:
         {%- endfor -%}
         {{ ns.o }}
       saved: "{{ applied.get('_open') }}"
+      switch_off: >-
+        {%- set sw = heating_switch[0] if heating_switch is list and heating_switch else heating_switch -%}
+        {{ sw is string and sw != '' and is_state(sw, 'off') }}
       mode: >-
-        {%- if open_now -%}{{ 'hold' if saved is list else 'open' }}
+        {%- if switch_off -%}off
+        {%- elif open_now -%}{{ 'hold' if saved is list else 'open' }}
         {%- else -%}{{ 'restore' if saved is list else 'plan' }}{%- endif -%}
 
-  # Window opened: remember the setpoints (in thermostat order) and turn down.
+  # Window opened: remember the setpoints (in thermostat order) and turn down. When the heating was
+  # just switched on with a window open, remember the plan's temperature instead of the 5 °C.
   - if:
       - condition: template
         value_template: "{{ mode == 'open' }}"
     then:
       - variables:
+          from_switch: "{{ trigger.id == 'switch' and wanted is number }}"
           saved: >-
             {%- set ns = namespace(l=[]) -%}
             {%- for th in th_list -%}
               {%- set t = state_attr(th, 'temperature') -%}
-              {%- set ns.l = ns.l + [t | float if states(th) not in ['off', 'unavailable', 'unknown'] and t is number else none] -%}
+              {%- if from_switch -%}{%- set ns.l = ns.l + [wanted] -%}
+              {%- else -%}{%- set ns.l = ns.l + [t | float if states(th) not in ['off', 'unavailable', 'unknown'] and t is number else none] -%}{%- endif -%}
             {%- endfor -%}
             {{ ns.l }}
-          applied: "{{ dict(applied, _open=saved) }}"
+          applied: >-
+            {%- set ns = namespace(a=applied) -%}
+            {%- if from_switch -%}{%- for th in th_list -%}{%- set ns.a = dict(ns.a, **{th: [wanted, stamp]}) -%}{%- endfor -%}{%- endif -%}
+            {{ dict(ns.a, _open=saved) }}
           targets: >-
             {%- set ns = namespace(l=[]) -%}
             {%- for th in th_list -%}
@@ -257,10 +283,19 @@ actions:
             {{ ns.l }}
           applied: "{{ dict(applied.items() | rejectattr(0, 'eq', '_open') | list) }}"
 
-  # Normal run: write the plan's temperature where it changed.
+  # Heating switched off: forget an open window, hold 5 °C (written once, like a plan value).
   - if:
       - condition: template
-        value_template: "{{ mode == 'plan' }}"
+        value_template: "{{ mode == 'off' }}"
+    then:
+      - variables:
+          applied: "{{ dict(applied.items() | rejectattr(0, 'eq', '_open') | list) }}"
+          wanted: 5
+
+  # Normal run (or off): write the plan's temperature where it changed.
+  - if:
+      - condition: template
+        value_template: "{{ mode in ['plan', 'off'] }}"
     then:
       # Nothing scheduled right now (a gap between blocks, or the plan is missing): leave everything alone.
       - condition: template
@@ -277,7 +312,7 @@ actions:
   # Window states are saved before writing, so the card shows them at once.
   - if:
       - condition: template
-        value_template: "{{ mode != 'plan' and (applied | to_json) != states(state_entity) }}"
+        value_template: "{{ mode not in ['plan', 'off'] and (applied | to_json) != states(state_entity) }}"
     then:
       - action: input_text.set_value
         target:
@@ -326,11 +361,11 @@ actions:
               continue_on_timeout: true
             - if:
                 - condition: template
-                  value_template: "{{ wait.completed and mode == 'plan' }}"
+                  value_template: "{{ wait.completed and mode in ['plan', 'off'] }}"
               then:
                 - variables:
                     applied: "{{ dict(applied, **{th: [temp, stamp]}) }}"
-                    late: "{{ late + [state_attr(th, 'friendly_name') or th] if trigger.id == 'start' and last is number else late }}"
+                    late: "{{ late + [state_attr(th, 'friendly_name') or th] if mode == 'plan' and trigger.id == 'start' and last is number else late }}"
 
   - if:
       - condition: template
