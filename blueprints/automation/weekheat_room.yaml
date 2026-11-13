@@ -158,24 +158,28 @@ actions:
                 {{ states(repeat.item) not in ['unavailable', 'unknown']
                    and (last is not number or (last - wanted) | abs >= 0.05) }}
           then:
+            # Switch an off thermostat on first: set_temperature's hvac_mode is ignored by some
+            # integrations (seen with HomeKit Controller: the setpoint is taken, the mode stays off).
             - if:
                 - condition: template
                   value_template: "{{ is_state(repeat.item, 'off') }}"
               then:
-                - action: climate.set_temperature
+                - action: climate.set_hvac_mode
                   continue_on_error: true
                   target:
                     entity_id: "{{ repeat.item }}"
                   data:
-                    temperature: "{{ wanted }}"
                     hvac_mode: heat
-              else:
-                - action: climate.set_temperature
-                  continue_on_error: true
-                  target:
-                    entity_id: "{{ repeat.item }}"
-                  data:
-                    temperature: "{{ wanted }}"
+                - wait_template: "{{ not is_state(repeat.item, 'off') }}"
+                  timeout:
+                    seconds: "{{ settle_time }}"
+                  continue_on_timeout: true
+            - action: climate.set_temperature
+              continue_on_error: true
+              target:
+                entity_id: "{{ repeat.item }}"
+              data:
+                temperature: "{{ wanted }}"
             - wait_template: >-
                 {{ (state_attr(repeat.item, 'temperature') | float(-100) - wanted) | abs < 0.25
                    and not is_state(repeat.item, 'off') }}

@@ -168,8 +168,9 @@ Consequences:
   by 00:00 Off does not reset a manual 22 °C at midnight).
 - A changed exception, an edited plan or week, or a day that turns free during the day (an event
   added for today) take effect at once if they change the wanted temperature.
-- If a thermostat is `off` when a write is due, the write switches it to `heat`
-  (`climate.set_temperature` with `hvac_mode: heat`).
+- If a thermostat is `off` when a write is due, the write switches it to `heat` first
+  (`climate.set_hvac_mode`, then `climate.set_temperature`; HomeKit Controller ignores the
+  `hvac_mode` of `set_temperature`).
 
 ### Triggers
 
