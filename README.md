@@ -11,6 +11,10 @@ single setpoint.
   `Homeoffice` → the Home office plan), and exceptions set on the card.
 - Thermostats are written only when the scheduled temperature changes, so a change made by hand holds
   until the next period with a different temperature. There is no manual mode to leave.
+- The card lists the rooms with their status and temperature. An opened room has three views: **Control**
+  (the dial and the heating switch), **Plan** (one plan at a time: a day chart and its periods) and
+  **Week**. The day list sits behind the day chip at the top, the setup (rooms, calendars, keyword rules)
+  behind the gear.
 - An opened room shows its setpoint on a **dial** (drag the handle, use − / + or the arrow keys) or in a
   compact row.
 - **Windows and doors**: while a room's window or door sensor is open (for a delay, 30 s by default), its

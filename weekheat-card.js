@@ -2,7 +2,7 @@
 // Pairs with the Weekheat blueprints (weekheat_day script, weekheat_room automation).
 // The first part (exported) is plain logic without DOM, tested in tests/logic.test.mjs.
 
-export const VERSION = '0.4.0';
+export const VERSION = '0.5.0';
 export const WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const SCHEDULE_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 export const ROOM_BLUEPRINT = 'weekheat_room.yaml';
@@ -209,7 +209,12 @@ export const I18N = {
     new_room_paused: 'Neue Räume starten pausiert: Pläne prüfen, dann aktivieren.',
     late: 'Verspätet', dismiss: 'Ausblenden', reason_weekend: 'Wochenende',
     heating: 'Heizt', scheduled: 'Nach Plan', current: 'Raum', layout_dial: 'Regler', layout_compact: 'Kompakt',
-    setpoint: 'Solltemperatur', heating_off: 'Aus', heating_l: 'Heizung', turn_on: 'Heizung einschalten', turn_off: 'Heizung ausschalten', window_open: 'Fenster offen', windows: 'Fenster- und Türkontakte',
+    setpoint: 'Solltemperatur', all_rooms: 'Alle Räume', v_control: 'Regler', v_plan: 'Plan', v_week: 'Woche', heating_l_cap: 'Heizung', to: 'auf',
+    rename: 'Umbenennen', unsaved: 'Nicht gespeichert', used_on: 'Verwendet', not_used: 'Derzeit in keiner Woche verwendet',
+    free_days: 'Freie Tage', week_help: 'Freie Tage sind Wochenenden, Feiertage und Tage aus Kalender oder Ausnahmen.',
+    rooms: 'Räume', thermostats_short: 'Thermostat(e)', windows_short: 'Kontakt(e)', day_settings: 'Werktage und freie Tage',
+    day_settings_sub: 'Kalender, Stichwörter, Workday', pause_room: 'Raum pausieren', activate_room: 'Raum aktivieren',
+    pause_help: 'Pausiert: Weekheat schreibt nichts, die Thermostate behalten ihren Wert. Zum Abschalten den Heizungsschalter des Raums verwenden.', heating_off: 'Aus', heating_l: 'Heizung', turn_on: 'Heizung einschalten', turn_off: 'Heizung ausschalten', window_open: 'Fenster offen', windows: 'Fenster- und Türkontakte',
     window_delay: 'Verzögerung (Sekunden)',
     window_help: 'Ist einer davon so lange offen, werden die Thermostate auf 5 °C gestellt; sind alle wieder zu, gilt wieder der Wert von vorher (oder der Plan, falls inzwischen eine neue Periode begann).',
   },
@@ -239,7 +244,12 @@ export const I18N = {
     new_room_paused: 'New rooms start paused: check the plans, then activate.',
     late: 'Late', dismiss: 'Dismiss', reason_weekend: 'Weekend',
     heating: 'Heating', scheduled: 'Scheduled', current: 'Room', layout_dial: 'Dial', layout_compact: 'Compact',
-    setpoint: 'Setpoint', heating_off: 'Off', heating_l: 'heating', turn_on: 'Turn heating on', turn_off: 'Turn heating off', window_open: 'Window open', windows: 'Window and door sensors',
+    setpoint: 'Setpoint', all_rooms: 'All rooms', v_control: 'Control', v_plan: 'Plan', v_week: 'Week', heating_l_cap: 'Heating', to: 'to',
+    rename: 'Rename', unsaved: 'Not saved', used_on: 'Used', not_used: 'Not used in the week at the moment',
+    free_days: 'Free days', week_help: 'Free days are weekends, public holidays and days from calendars or exceptions.',
+    rooms: 'Rooms', thermostats_short: 'thermostat(s)', windows_short: 'sensor(s)', day_settings: 'Working days and free days',
+    day_settings_sub: 'Calendars, keywords, Workday', pause_room: 'Pause room', activate_room: 'Activate room',
+    pause_help: 'Paused: Weekheat writes nothing and the thermostats keep their value. To turn a room off, use its heating switch.', heating_off: 'Off', heating_l: 'heating', turn_on: 'Turn heating on', turn_off: 'Turn heating off', window_open: 'Window open', windows: 'Window and door sensors',
     window_delay: 'Delay (seconds)',
     window_help: 'When one of them has been open this long, the thermostats are set to 5 °C; when all are closed again, the value from before applies again (or the plan, if a new period began in between).',
   },
@@ -327,7 +337,8 @@ class WeekheatCard extends Base {
     let saved = null;
     try { saved = localStorage.getItem('weekheat-layout'); } catch (e) { /* no storage */ }
     this._layout = ['dial', 'compact'].includes(saved) ? saved : this._config.layout === 'compact' ? 'compact' : 'dial';
-    this._ui = this._ui || { tab: 'rooms', expanded: {}, sub: {}, dayEdit: null, addRoom: null, addPlan: null };
+    this._ui = this._ui || { view: 'rooms', open: null, sub: {}, planSel: {}, editPeriod: null, renamePlan: null, setOpen: null,
+      dayEdit: null, addRoom: null, addPlan: null };
     this._render();
   }
 
@@ -472,7 +483,10 @@ class WeekheatCard extends Base {
     return { heatingOff, windowOpen, openWin, plan, periods, at, wanted, current: cur.length ? cur.reduce((a, b) => a + b, 0) / cur.length : null, target,
       unavailable: th.length - avail.length, off: avail.some((s) => s.state === 'off'), manual,
       active: h.states[room.entity]?.state === 'on', step: avail[0]?.attributes.target_temp_step || 0.5,
-      heating: avail.some((s) => s.attributes.hvac_action === 'heating') };
+      // hvac_action alone is not enough: over HomeKit the Aqara valves report "heating" whenever the mode is heat.
+      heating: avail.some((s) => s.attributes.hvac_action === 'heating'
+        && !(typeof s.attributes.current_temperature === 'number' && typeof s.attributes.temperature === 'number'
+          && s.attributes.current_temperature >= s.attributes.temperature - 0.2)) };
   }
 
   // ---------- actions ----------
@@ -571,6 +585,7 @@ class WeekheatCard extends Base {
     else if (template && this._plans[template]) periods = this._plans[template].periods;
     const entity = await this._createPlan(room.name, name, periods);
     await this._saveRoomConfig(room, { plans: [...room.plans, entity] });
+    return entity;
   }
 
   async _deletePlan(room, entity) {
@@ -723,7 +738,7 @@ class WeekheatCard extends Base {
     const ui = this._ui;
     if (!ui.draft || ui.draft.room !== room.id) {
       ui.draft = { room: room.id, plans: Object.fromEntries(room.plans.filter((p) => this._plans[p]).map((p) => [p,
-        { name: this._planName(room, p), periods: this._plans[p].periods.map((x) => ({ ...x })) }])),
+        { name: this._planName(room, p), origName: this._planName(room, p), periods: this._plans[p].periods.map((x) => ({ ...x })) }])),
       week: { ...room.week }, free_day: room.free_day, name: room.name, thermostats: [...room.thermostats],
       windows: [...(room.windows || [])], window_delay: room.window_delay ?? 30 };
     }
@@ -736,9 +751,31 @@ class WeekheatCard extends Base {
     const plan = el.closest('[data-plan]')?.dataset.plan;
     const i = el.dataset.i != null ? +el.dataset.i : null;
     switch (a) {
-      case 'tab': ui.tab = el.dataset.v; break;
-      case 'toggle': ui.expanded[room.id] = !ui.expanded[room.id]; break;
-      case 'sub': ui.sub[room.id] = ui.sub[room.id] === el.dataset.v ? null : el.dataset.v; ui.draft = null; ui.addPlan = null; break;
+      case 'view': ui.view = ui.view === el.dataset.v ? 'rooms' : el.dataset.v; ui.dayEdit = null; break;
+      case 'toggle':
+        ui.open = ui.open === room.id ? null : room.id;
+        ui.editPeriod = null; ui.addPlan = null; ui.renamePlan = null;
+        break;
+      case 'sub': ui.sub[room.id] = el.dataset.v; ui.editPeriod = null; ui.addPlan = null; ui.renamePlan = null; break;
+      case 'plan-sel': ui.planSel[room.id] = el.dataset.v; ui.editPeriod = null; ui.addPlan = null; ui.renamePlan = null; break;
+      case 'edit-period': {
+        if (!this._admin) return;
+        const same = ui.editPeriod && ui.editPeriod.room === room.id && ui.editPeriod.plan === plan && ui.editPeriod.i === i;
+        ui.editPeriod = same ? null : { room: room.id, plan, i };
+        break;
+      }
+      case 'p-step': {
+        const x = this._draftFor(room).plans[plan].periods[i];
+        const v = (x.temperature ?? 20) + (+el.dataset.v) * 0.5;
+        x.temperature = Math.max(MIN_T, Math.min(MAX_T, Math.round(v * 2) / 2));
+        break;
+      }
+      case 'rename-plan': ui.renamePlan = plan; break;
+      case 'set-open':
+        ui.setOpen = ui.setOpen === el.dataset.v ? null : el.dataset.v;
+        if (ui.setOpen === 'add') ui.addRoom = { name: '', thermostats: [] };
+        ui.draft = null; ui.settings = null;
+        break;
       case 'step': {
         const n = this._roomNow(room);
         const base = this._stepTarget?.room === room.id ? this._stepTarget.value : (n.target ?? n.wanted ?? 20);
@@ -763,25 +800,28 @@ class WeekheatCard extends Base {
         const d = this._draftFor(room).plans[plan];
         const last = d.periods[d.periods.length - 1];
         const start = Math.min(1439, (last ? last.start : 0) + 60);
-        if (!last || start > last.start) d.periods.push({ start, temperature: last ? periodTemp(last) : 20, off: false });
+        if (!last || start > last.start) {
+          d.periods.push({ start, temperature: last && !last.off ? periodTemp(last) : 20, off: false });
+          ui.editPeriod = { room: room.id, plan, i: d.periods.length - 1 };
+        }
         break;
       }
-      case 'del-period': this._draftFor(room).plans[plan].periods.splice(i, 1); break;
+      case 'del-period': this._draftFor(room).plans[plan].periods.splice(i, 1); ui.editPeriod = null; break;
       case 'save-plan': {
         const d = this._draftFor(room).plans[plan];
-        this._run(async () => { await this._savePlan(room, plan, d); ui.draft = null; await this._poke([room]); });
+        this._run(async () => { await this._savePlan(room, plan, d); ui.draft = null; ui.editPeriod = null; ui.renamePlan = null; await this._poke([room]); this._render(true); });
         return;
       }
-      case 'reset-plan': ui.draft = null; break;
+      case 'reset-plan': ui.draft = null; ui.editPeriod = null; ui.renamePlan = null; break;
       case 'del-plan':
         if (!confirm(this._t.confirm_delete_plan)) return;
         this._run(async () => { await this._deletePlan(room, plan); ui.draft = null; });
         return;
-      case 'add-plan-open': ui.addPlan = { room: room.id, name: '', template: 'starter_weekday' }; break;
+      case 'add-plan-open': ui.addPlan = ui.addPlan?.room === room.id ? null : { room: room.id, name: '', template: 'starter_weekday' }; break;
       case 'add-plan': {
         const f = ui.addPlan;
         if (!f.name.trim()) return;
-        this._run(async () => { await this._addPlan(room, f.name.trim(), f.template); ui.addPlan = null; ui.draft = null; });
+        this._run(async () => { const e = await this._addPlan(room, f.name.trim(), f.template); ui.addPlan = null; ui.draft = null; ui.planSel[room.id] = e; this._render(true); });
         return;
       }
       case 'add-plan-cancel': ui.addPlan = null; break;
@@ -819,12 +859,10 @@ class WeekheatCard extends Base {
         return;
       }
       case 'reset-settings': ui.settings = null; break;
-      case 'add-room-open': ui.addRoom = { name: '', thermostats: [] }; break;
-      case 'add-room-cancel': ui.addRoom = null; break;
       case 'add-room': {
         const f = ui.addRoom;
         if (!f.name.trim() || !f.thermostats.length) return;
-        this._run(async () => { await this._addRoom(f.name.trim(), f.thermostats); ui.addRoom = null; }, false);
+        this._run(async () => { await this._addRoom(f.name.trim(), f.thermostats); ui.addRoom = null; ui.setOpen = null; }, false);
         return;
       }
       case 'dismiss': this._hass.callService('persistent_notification', 'dismiss', { notification_id: el.dataset.v }); return;
@@ -905,111 +943,112 @@ class WeekheatCard extends Base {
     if (!this._hass) { this.shadowRoot.innerHTML = `<style>${STYLE}</style><ha-card></ha-card>`; return; }
     const t = this._t;
     const ui = this._ui;
+    const view = ui.view === 'settings' && !this._admin ? 'rooms' : ui.view || 'rooms';
     let body;
     if (this._admin === false) body = `<div class="note">${esc(t.need_admin)}</div>`;
     else if (!this._rooms) body = '<div class="note">…</div>';
-    else if (ui.tab === 'days') body = this._renderDays();
-    else if (ui.tab === 'settings') body = this._renderSettings();
+    else if (view === 'days') body = this._renderDays();
+    else if (view === 'settings') body = this._renderSetup();
     else body = this._renderRooms();
-    const tabs = ['rooms', 'days', ...(this._admin ? ['settings'] : [])].map((k) => `<button class="tab ${ui.tab === k ? 'on' : ''}" data-a="tab" data-v="${k}">${esc(k === 'rooms' ? (this._lang === 'de' ? 'Räume' : 'Rooms') : t[k])}</button>`).join('');
     const notes = Object.values(this._notes || {}).filter((n) => String(n.notification_id).startsWith('weekheat_'))
       .map((n) => `<div class="banner warn"><span>${esc(n.message)}</span><button class="link" data-a="dismiss" data-v="${esc(n.notification_id)}">${esc(t.dismiss)}</button></div>`).join('');
     const today = this._days ? this._today() : null;
-    const head = today ? `<span class="daytype ${today.free ? 'free' : ''}">${esc(today.free ? t.free_day : t.working_day)}${today.plan ? ` · ${esc(today.plan)}` : ''}</span>` : '';
+    const dayChip = today ? `<button class="daytype ${today.free ? 'free' : ''} ${view === 'days' ? 'on' : ''}" data-a="view" data-v="days" title="${esc(t.days)}">${esc(today.free ? t.free_day : t.working_day)}${today.plan ? ` · ${esc(today.plan)}` : ''}</button>` : '';
+    const gear = this._admin ? `<button class="iconbtn ${view === 'settings' ? 'on' : ''}" data-a="view" data-v="settings" title="${esc(t.settings)}"><ha-icon icon="mdi:cog"></ha-icon></button>` : '';
+    const title = view === 'rooms'
+      ? (this._config.title ? `<div class="title">${esc(this._config.title)}</div>` : '<span></span>')
+      : `<button class="back" data-a="view" data-v="rooms"><ha-icon icon="mdi:chevron-left"></ha-icon>${esc(view === 'days' ? t.days : t.settings)}</button>`;
     const msg = this._msg ? `<div class="banner ${this._msg.bad ? 'bad' : 'ok'}">${esc(this._msg.text)}</div>` : '';
     const err = this._error ? `<div class="banner bad">${esc(this._error)}</div>` : '';
     const noScript = this._rooms && this._admin && !this._script ? `<div class="banner bad">${esc(t.no_script)}</div>` : '';
     this.shadowRoot.innerHTML = `<style>${STYLE}</style><ha-card>
-      <div class="top">${this._config.title ? `<div class="title">${esc(this._config.title)}</div>` : ''}${head}</div>
-      <div class="tabs">${tabs}</div>${msg}${err}${noScript}${notes}<div class="body">${body}</div></ha-card>`;
+      <div class="top">${title}<span class="grow"></span>${dayChip}${gear}</div>
+      ${msg}${err}${noScript}${notes}<div class="body">${body}</div></ha-card>`;
   }
 
-  _ribbon(periods, nowMin) {
+  /** Day chart: one bar per period, its height by temperature; Off hatched and low. */
+  _chart(periods, nowMin, sel) {
+    const lo = 10;
+    const hi = 26;
     const segs = periods.map((p, i) => {
       const end = i + 1 < periods.length ? periods[i + 1].start : 1440;
       const w = ((end - p.start) / 1440) * 100;
-      const cls = p.temperature == null ? 'gap' : p.off ? 'off' : '';
-      const style = `left:${(p.start / 1440) * 100}%;width:${w}%;${cls ? '' : `background:${tempColor(p.temperature)}`}`;
-      const label = w > 7 ? `<span>${esc(p.temperature == null ? '' : p.off ? this._t.off : Number(p.temperature).toLocaleString(this._lang))}</span>` : '';
-      return `<div class="seg ${cls}" style="${style}" title="${fromMin(p.start)} ${esc(fmtTemp(p, this._lang))}">${label}</div>`;
+      const gap = p.temperature == null;
+      const h = gap ? 0 : p.off ? 16 : 28 + 72 * Math.max(0, Math.min(1, (p.temperature - lo) / (hi - lo)));
+      const label = w > 6 && !gap ? `<span>${esc(p.off ? this._t.off : Number(p.temperature).toLocaleString(this._lang === 'de' ? 'de-AT' : 'en-GB'))}</span>` : '';
+      return `<div class="cseg ${p.off ? 'off' : ''} ${sel === i ? 'sel' : ''}" data-a="edit-period" data-i="${i}" style="left:${(p.start / 1440) * 100}%;width:${w}%">
+        <div class="cbar" style="height:${h}%;${p.off || gap ? '' : `background:${tempColor(p.temperature)}`}">${label}</div></div>`;
     }).join('');
     const marker = nowMin != null ? `<div class="now" style="left:${(nowMin / 1440) * 100}%"></div>` : '';
-    return `<div class="ribbon">${segs}${marker}</div><div class="ticks"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>`;
+    return `<div class="chart">${segs}${marker}</div><div class="ticks"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>`;
+  }
+
+  /** Icon, colour class and text for a room's status line. */
+  _status(room, n) {
+    const t = this._t;
+    const L = this._lang;
+    const until = n.at?.next ? ` ${t.until} ${fromMin(n.at.next.start)}` : '';
+    if (!n.active) return { icon: 'mdi:pause', cls: 'paused', text: `${t.paused}${n.target != null ? ` · ${fmtTemp(n.target, L)}` : ''}` };
+    if (n.heatingOff) return { icon: 'mdi:power', cls: 'paused', text: t.heating_off };
+    if (n.windowOpen) return { icon: 'mdi:window-open-variant', cls: 'window', text: `${t.window_open} · ${fmtTemp(OFF_T, L)}` };
+    if (n.manual) return { icon: 'mdi:hand-back-right-outline', cls: 'manual', text: `${t.manual} · ${fmtTemp(n.target, L)}${until}` };
+    if (n.heating) return { icon: 'mdi:fire', cls: 'heat', text: `${t.heating} · ${t.to} ${fmtTemp(n.target, L)}${until}` };
+    return { icon: 'mdi:check', cls: 'ok', text: n.at ? `${fmtTemp(n.at.period, L)}${until || ` ${t.until} ${t.tomorrow_l}`}` : '–' };
   }
 
   _renderRooms() {
     const t = this._t;
-    const ui = this._ui;
-    if (!this._rooms.length && !ui.addRoom) {
-      return `<div class="note">${esc(t.no_rooms)}</div>${this._admin ? `<button class="btn" data-a="add-room-open">${esc(t.add_room)}</button>` : ''}`;
+    if (!this._rooms.length) {
+      return `<div class="note">${esc(t.no_rooms)}</div>${this._admin ? `<button class="btn" data-a="view" data-v="settings">${esc(t.add_room)}</button>` : ''}`;
     }
-    const rows = this._rooms.map((r) => this._renderRoom(r)).join('');
-    let add = '';
-    if (this._admin) {
-      if (ui.addRoom) {
-        const used = new Set(this._rooms.flatMap((r) => r.thermostats));
-        const climates = Object.values(this._hass.states).filter((s) => s.entity_id.startsWith('climate.'));
-        add = `<div class="panel"><div class="ptitle">${esc(t.add_room)}</div>
-          <label class="field">${esc(t.name)} <input data-c="ar-name" value="${esc(ui.addRoom.name)}"></label>
-          <div class="field">${esc(t.thermostats)}</div>
-          ${climates.map((s) => `<label class="check"><input type="checkbox" data-c="ar-th" data-v="${s.entity_id}" ${ui.addRoom.thermostats.includes(s.entity_id) ? 'checked' : ''}> ${esc(s.attributes.friendly_name || s.entity_id)}${used.has(s.entity_id) ? ' <span class="dim">(✓)</span>' : ''}</label>`).join('')}
-          <div class="dim small">${esc(t.new_room_paused)}</div>
-          <div class="actions"><button class="btn" data-a="add-room">${esc(t.create)}</button><button class="btn flat" data-a="add-room-cancel">${esc(t.cancel)}</button></div></div>`;
-      } else add = `<button class="btn flat" data-a="add-room-open">+ ${esc(t.add_room)}</button>`;
-    }
-    return rows + add;
+    return this._rooms.map((r) => this._renderRoom(r)).join('');
   }
 
   _renderRoom(room) {
     const t = this._t;
     const n = this._roomNow(room);
-    const open = !!this._ui.expanded[room.id];
-    const shown = this._stepTarget?.room === room.id ? this._stepTarget.value : n.target;
-    const chips = [];
-    if (!n.active) chips.push(`<span class="chip paused">${esc(t.paused)}</span>`);
-    if (n.unavailable) chips.push(`<span class="chip bad">${esc(t.unavailable)}</span>`);
-    if (n.manual && n.active) chips.push(`<span class="chip manual">${esc(t.manual)}</span>`);
-    if (n.windowOpen) chips.push(`<span class="chip window">${esc(t.window_open)}</span>`);
-    if (n.heatingOff) chips.push(`<span class="chip paused">${esc(t.heating_off)}</span>`);
-    let line = '';
-    if (n.at) {
-      const until = n.at.next ? `${t.until} ${fromMin(n.at.next.start)}, ${t.then} ${fmtTemp(n.at.next, this._lang)}` : `${t.until} ${t.tomorrow_l}`;
-      line = n.heatingOff
-        ? `${t.heating_off}: ${fmtTemp(OFF_T, this._lang)} · ${t.plan} ${fmtTemp(n.at.period, this._lang)}`
-        : n.windowOpen
-        ? `${t.window_open}: ${fmtTemp(OFF_T, this._lang)} · ${t.plan} ${fmtTemp(n.at.period, this._lang)}`
-        : n.manual && n.active
-        ? `${t.manual}: ${fmtTemp(n.target, this._lang)} ${n.at.next ? `${t.until} ${fromMin(n.at.next.start)}` : ''} · ${t.plan} ${fmtTemp(n.at.period, this._lang)}`
-        : `${fmtTemp(n.at.period, this._lang)} ${until}`;
-    }
+    const open = this._ui.open === room.id;
+    const st = this._status(room, n);
     const head = `<div class="rhead" data-a="toggle">
-      <div class="rname">${esc(room.name)} ${chips.join('')}</div>
-      <div class="rtemp"><button class="power ${n.heatingOff ? '' : 'on'}" data-a="power" title="${esc(n.heatingOff ? t.turn_on : t.turn_off)}" aria-label="${esc(n.heatingOff ? t.turn_on : t.turn_off)}" ${!room.heating_switch && !this._admin ? 'disabled' : ''}>⏻</button>${n.current != null ? fmtTemp(Math.round(n.current * 10) / 10, this._lang) : '–'}${n.heating ? ' <span class="flame">▲</span>' : ''}</div>
-      <div class="rline dim">${esc(line)}</div></div>`;
+      <div class="ricon ${st.cls}"><ha-icon icon="${st.icon}"></ha-icon></div>
+      <div class="rmain"><div class="rname">${esc(room.name)}${n.unavailable ? ` <span class="chip bad">${esc(t.unavailable)}</span>` : ''}</div>
+        <div class="rline ${st.cls}">${esc(st.text)}</div></div>
+      <div class="rtemp">${n.current != null ? `${Number(Math.round(n.current * 10) / 10).toLocaleString(this._lang === 'de' ? 'de-AT' : 'en-GB')}°` : '–'}</div>
+      <ha-icon class="chev" icon="${open ? 'mdi:chevron-up' : 'mdi:chevron-down'}"></ha-icon></div>`;
     if (!open) return `<div class="room" data-room="${room.id}">${head}</div>`;
-    const now = this._now();
-    const sub = this._ui.sub[room.id];
-    const subs = ['plans', 'week', ...(this._admin ? ['room'] : [])].map((k) => `<button class="tab small ${sub === k ? 'on' : ''}" data-a="sub" data-v="${k}">${esc(t[k])}</button>`).join('');
-    const th = room.thermostats.map((e) => {
-      const s = this._hass.states[e];
-      if (!s) return `<div class="th dim">${esc(e)}</div>`;
-      const st = ['unavailable', 'unknown'].includes(s.state) ? t.unavailable : s.state === 'off' ? t.off : fmtTemp(s.attributes.temperature, this._lang);
-      return `<div class="th"><span>${esc(s.attributes.friendly_name || e)}</span><span class="dim">${fmtTemp(s.attributes.current_temperature, this._lang)} → ${esc(st)}</span></div>`;
-    }).join('');
-    let detail = '';
-    if (sub === 'plans') detail = this._renderPlans(room);
+    const sub = this._ui.sub[room.id] || 'control';
+    const seg = ['control', 'plan', 'week'].map((k) => `<button class="${sub === k ? 'on' : ''}" data-a="sub" data-v="${k}">${esc(t[`v_${k}`])}</button>`).join('');
+    const sw = `<label class="switch" title="${esc(n.heatingOff ? t.turn_on : t.turn_off)}"><span>${esc(t.heating_l_cap)}</span>
+      <button class="tog ${n.heatingOff ? '' : 'on'}" data-a="power" role="switch" aria-checked="${!n.heatingOff}" ${!room.heating_switch && !this._admin ? 'disabled' : ''}><i></i></button></label>`;
+    let detail;
+    if (sub === 'plan') detail = this._renderPlan(room, n);
     else if (sub === 'week') detail = this._renderWeek(room);
-    else if (sub === 'room') detail = this._renderRoomSettings(room);
+    else detail = this._renderControl(room, n);
     return `<div class="room open" data-room="${room.id}">${head}
-      ${this._layout === 'dial' ? `<div class="dialbox">
+      <div class="rbar"><div class="segc">${seg}</div><span class="grow"></span>${sw}</div>${detail}</div>`;
+  }
+
+  _renderControl(room, n) {
+    const t = this._t;
+    const shown = this._stepTarget?.room === room.id ? this._stepTarget.value : n.target;
+    const ctrl = this._layout === 'dial' ? `<div class="dialbox">
         <svg data-dial viewBox="0 0 200 200" tabindex="0" role="slider" aria-label="${esc(t.setpoint)}" aria-valuemin="${MIN_T}" aria-valuemax="${MAX_T}" aria-valuenow="${shown ?? ''}">${this._dialSvg(room, n, shown)}</svg>
         <div class="ctrl dialctrl"><button class="round" data-a="step" data-v="-1">−</button><button class="round" data-a="step" data-v="1">+</button></div></div>`
-        : `<div class="ctrl"><button class="round" data-a="step" data-v="-1">−</button><div class="target">${fmtTemp(shown, this._lang)}</div><button class="round" data-a="step" data-v="1">+</button></div>`}
-      <div class="actions ctrlbar">${this._admin ? `<button class="btn flat small" data-a="active">${esc(n.active ? t.active : t.paused)} ${n.active ? '●' : '○'}</button>` : ''}
-        <span class="grow"></span><button class="btn flat small" data-a="layout">${esc(this._layout === 'dial' ? t.layout_compact : t.layout_dial)}</button></div>
-      ${th}
-      <div class="today"><span class="dim">${esc(t.today)}: ${esc(this._planName(room, n.plan))}</span>${this._ribbon(n.periods, now.min)}</div>
-      <div class="tabs">${subs}</div>${detail}</div>`;
+      : `<div class="ctrl"><button class="round" data-a="step" data-v="-1">−</button><div class="target">${fmtTemp(shown, this._lang)}</div><button class="round" data-a="step" data-v="1">+</button></div>`;
+    let next = '';
+    if (n.at) {
+      const name = this._planName(room, n.plan);
+      next = `<div class="pill"><span>${esc(name)}: ${esc(fmtTemp(n.at.period, this._lang))} ${esc(n.at.next ? `${t.until} ${fromMin(n.at.next.start)}` : `${t.until} ${t.tomorrow_l}`)}</span>
+        ${n.at.next ? `<span class="dim">${esc(t.then)} ${esc(fmtTemp(n.at.next, this._lang))}</span>` : ''}</div>`;
+    }
+    const th = room.thermostats.length > 1 ? room.thermostats.map((e) => {
+      const s = this._hass.states[e];
+      if (!s) return `<div class="th dim">${esc(e)}</div>`;
+      const v = ['unavailable', 'unknown'].includes(s.state) ? t.unavailable : s.state === 'off' ? t.off : fmtTemp(s.attributes.temperature, this._lang);
+      return `<div class="th"><span>${esc(planLabel(s.attributes.friendly_name || e, room.name) || s.attributes.friendly_name)}</span><span class="dim">${fmtTemp(s.attributes.current_temperature, this._lang)} → ${esc(v)}</span></div>`;
+    }).join('') : '';
+    return `${ctrl}${next}${th}
+      <div class="foot"><button class="link small" data-a="layout">${esc(this._layout === 'dial' ? t.layout_compact : t.layout_dial)}</button></div>`;
   }
 
   /** Inside of the dial SVG for setpoint `v`: coloured scale, filled up to `v`, the handle, a tick for the
@@ -1050,40 +1089,66 @@ class WeekheatCard extends Base {
     return parts.join('');
   }
 
-  _renderPlans(room) {
+  /** Is the plan's draft different from what is saved? */
+  _planDirty(entity, dp) {
+    const orig = this._plans[entity];
+    const norm = (ps) => JSON.stringify(ps.map((x) => [x.start, x.off ? 'off' : x.temperature]));
+    return !orig || norm(orig.periods) !== norm(dp.periods) || dp.name !== dp.origName;
+  }
+
+  _renderPlan(room, n) {
     const t = this._t;
+    const ui = this._ui;
     const d = this._draftFor(room);
-    const plans = room.plans.filter((p) => d.plans[p]).map((p) => {
-      const dp = d.plans[p];
-      const errs = checkPeriods(dp.periods);
-      const rows = dp.periods.map((x, i) => `<div class="prow">
-        <input type="time" step="60" data-c="p-start" data-i="${i}" value="${fromMin(x.start)}" ${i === 0 ? 'disabled' : ''}>
-        <input type="number" inputmode="decimal" min="${MIN_T}" max="${MAX_T}" step="0.5" data-c="p-temp" data-i="${i}" value="${x.off || x.temperature == null ? '' : x.temperature}" ${x.off ? 'disabled' : ''}>
-        <label class="check"><input type="checkbox" data-c="p-off" data-i="${i}" ${x.off ? 'checked' : ''}> ${esc(t.off)}</label>
-        ${i === 0 ? '<span></span>' : `<button class="icon" data-a="del-period" data-i="${i}" title="${esc(t.delete)}">✕</button>`}</div>`).join('');
-      const roles = [];
-      if (p === room.free_day) roles.push(t.free_day);
-      const days = WEEK.filter((k) => room.week[k] === p).map((k) => t.wd_short[k]);
-      if (days.length) roles.push(days.join(' '));
-      return `<div class="panel" data-plan="${p}">
-        <div class="phead"><input class="pname" data-c="p-name" value="${esc(dp.name)}"><span class="dim small">${esc(roles.join(' · '))}</span></div>
-        ${this._ribbon(dp.periods)}
-        <div class="prow hdr dim small"><span>${esc(t.from)}</span><span>°C</span><span></span><span></span></div>${rows}
-        ${errs.length ? `<div class="err">${errs.map((e) => esc(t[`err_${e}`])).join(' ')}</div>` : ''}
-        <div class="actions"><button class="btn flat small" data-a="add-period">+ ${esc(t.add_period)}</button>
-          <span class="grow"></span>
-          <button class="btn flat small" data-a="del-plan">${esc(t.delete)}</button>
-          <button class="btn flat small" data-a="reset-plan">${esc(t.cancel)}</button>
-          <button class="btn small" data-a="save-plan" ${errs.length ? 'disabled' : ''}>${esc(t.save)}</button></div></div>`;
-    }).join('');
-    const ap = this._ui.addPlan?.room === room.id ? this._ui.addPlan : null;
-    const templates = [['starter_weekday', t.starter_weekday], ['starter_free', t.starter_free],
-      ...this._rooms.flatMap((r) => r.plans.filter((p) => this._plans[p]).map((p) => [p, `${r.name}: ${this._planName(r, p)}`]))];
-    const add = ap ? `<div class="panel"><label class="field">${esc(t.name)} <input data-c="ap-name" value="${esc(ap.name)}"></label>
+    const plans = room.plans.filter((p) => d.plans[p]);
+    const ap = ui.addPlan?.room === room.id ? ui.addPlan : null;
+    let selPlan = ui.planSel[room.id];
+    if (!plans.includes(selPlan)) selPlan = plans.includes(n.plan) ? n.plan : plans[0];
+    const chips = plans.map((p) => `<button class="pick ${p === selPlan && !ap ? 'on' : ''} ${this._planDirty(p, d.plans[p]) ? 'dirty' : ''}" data-a="plan-sel" data-v="${esc(p)}">${esc(d.plans[p].name)}${p === n.plan ? ' •' : ''}</button>`).join('')
+      + (this._admin ? `<button class="pick add ${ap ? 'on' : ''}" data-a="add-plan-open" title="${esc(t.add_plan)}">+</button>` : '');
+    if (ap) {
+      const templates = [['starter_weekday', t.starter_weekday], ['starter_free', t.starter_free],
+        ...this._rooms.flatMap((r) => r.plans.filter((p) => this._plans[p]).map((p) => [p, `${r.name}: ${this._planName(r, p)}`]))];
+      return `<div class="picks">${chips}</div><div class="panel"><label class="field">${esc(t.name)} <input data-c="ap-name" value="${esc(ap.name)}"></label>
         <label class="field">${esc(t.copy_from)} <select data-c="ap-template">${templates.map(([v, l]) => `<option value="${esc(v)}" ${ap.template === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
-        <div class="actions"><button class="btn small" data-a="add-plan">${esc(t.create)}</button><button class="btn flat small" data-a="add-plan-cancel">${esc(t.cancel)}</button></div></div>`
-      : `<button class="btn flat small" data-a="add-plan-open">+ ${esc(t.add_plan)}</button>`;
-    return plans + add;
+        <div class="actions"><span class="grow"></span><button class="btn flat small" data-a="add-plan-cancel">${esc(t.cancel)}</button><button class="btn small" data-a="add-plan">${esc(t.create)}</button></div></div>`;
+    }
+    if (!selPlan) return `<div class="picks">${chips}</div>`;
+    const dp = d.plans[selPlan];
+    const isToday = selPlan === n.plan;
+    const ed = ui.editPeriod?.room === room.id && ui.editPeriod.plan === selPlan ? ui.editPeriod.i : null;
+    const roles = [];
+    const days = WEEK.filter((k) => room.week[k] === selPlan).map((k) => t.wd_short[k]);
+    if (days.length) roles.push(days.join(' '));
+    if (selPlan === room.free_day) roles.push(t.free_days);
+    const errs = checkPeriods(dp.periods);
+    const rows = dp.periods.map((x, i) => {
+      if (i !== ed || !this._admin) {
+        const cur = isToday && n.at && n.at.period.start === x.start;
+        return `<div class="prow2 ${cur ? 'cur' : ''}" data-a="edit-period" data-i="${i}"><span>${fromMin(x.start)}</span><span class="grow"></span><span>${esc(fmtTemp(x, this._lang))}</span></div>`;
+      }
+      return `<div class="pedit">
+        <input type="time" step="60" data-c="p-start" data-i="${i}" value="${fromMin(x.start)}" ${i === 0 ? 'disabled' : ''}>
+        <div class="tstep"><button class="round sm" data-a="p-step" data-i="${i}" data-v="-1" ${x.off ? 'disabled' : ''}>−</button>
+          <span>${esc(x.off ? t.off : fmtTemp(x, this._lang))}</span>
+          <button class="round sm" data-a="p-step" data-i="${i}" data-v="1" ${x.off ? 'disabled' : ''}>+</button></div>
+        <label class="check"><input type="checkbox" data-c="p-off" data-i="${i}" ${x.off ? 'checked' : ''}> ${esc(t.off)}</label>
+        ${i === 0 ? '<span></span>' : `<button class="icon" data-a="del-period" data-i="${i}" title="${esc(t.delete)}"><ha-icon icon="mdi:delete-outline"></ha-icon></button>`}</div>`;
+    }).join('');
+    const dirty = this._planDirty(selPlan, dp);
+    const admin = this._admin ? `<div class="actions">
+        <button class="btn flat small" data-a="add-period">+ ${esc(t.add_period)}</button><span class="grow"></span>
+        ${ui.renamePlan === selPlan ? '' : `<button class="link small" data-a="rename-plan">${esc(t.rename)}</button>`}
+        <button class="link small" data-a="del-plan">${esc(t.delete)}</button></div>
+      ${ui.renamePlan === selPlan ? `<label class="field">${esc(t.name)} <input data-c="p-name" value="${esc(dp.name)}"></label>` : ''}
+      ${errs.length ? `<div class="err">${errs.map((e) => esc(t[`err_${e}`])).join(' ')}</div>` : ''}
+      ${dirty ? `<div class="savebar"><span>${esc(t.unsaved)}</span><span class="grow"></span><button class="btn flat small" data-a="reset-plan">${esc(t.cancel)}</button>
+        <button class="btn small" data-a="save-plan" ${errs.length ? 'disabled' : ''}>${esc(t.save)}</button></div>` : ''}` : '';
+    return `<div class="picks">${chips}</div>
+      <div data-plan="${esc(selPlan)}">
+        <div class="pinfo dim small">${esc(roles.length ? `${t.used_on}: ${roles.join(' · ')}` : t.not_used)}</div>
+        ${this._chart(dp.periods, isToday ? this._now().min : null, ed)}
+        <div class="plist">${rows}</div>${admin}</div>`;
   }
 
   _planOptions(room, selected) {
@@ -1093,14 +1158,47 @@ class WeekheatCard extends Base {
   _renderWeek(room) {
     const t = this._t;
     const d = this._draftFor(room);
-    const rows = WEEK.map((k) => `<label class="wrow"><span>${esc(t.weekdays[k])}${['sat', 'sun'].includes(k) ? ` <span class="dim small">(${esc(t.only_if_working)})</span>` : ''}</span>
-      <select data-c="w-day" data-v="${k}">${this._planOptions(room, d.week[k] || room.plans[0])}</select></label>`).join('');
-    return `<div class="panel"><div class="ptitle">${esc(t.working_day_plans)}</div>${rows}
-      <label class="wrow"><span><b>${esc(t.free_day_plan)}</b></span><select data-c="w-free">${this._planOptions(room, d.free_day)}</select></label>
-      <div class="actions"><span class="grow"></span><button class="btn small" data-a="save-week">${esc(t.save)}</button></div></div>`;
+    const dis = this._admin ? '' : 'disabled';
+    const rows = WEEK.map((k) => `<label class="wcell"><span>${esc(t.wd_short[k])}${['sat', 'sun'].includes(k) ? '<sup>*</sup>' : ''}</span>
+      <select data-c="w-day" data-v="${k}" ${dis}>${this._planOptions(room, d.week[k] || room.plans[0])}</select></label>`).join('');
+    const dirty = WEEK.some((k) => (d.week[k] || room.plans[0]) !== (room.week[k] || room.plans[0])) || d.free_day !== room.free_day;
+    return `<div class="wgrid">${rows}</div>
+      <label class="wrow free"><span>${esc(t.free_days)}</span><select data-c="w-free" ${dis}>${this._planOptions(room, d.free_day)}</select></label>
+      <div class="dim small">* ${esc(t.only_if_working)}. ${esc(t.week_help)}</div>
+      ${dirty ? `<div class="savebar"><span>${esc(t.unsaved)}</span><span class="grow"></span><button class="btn flat small" data-a="reset-plan">${esc(t.cancel)}</button>
+        <button class="btn small" data-a="save-week">${esc(t.save)}</button></div>` : ''}`;
   }
 
-  _renderRoomSettings(room) {
+  /** Setup (admin): rooms (name, thermostats, windows, pause), add room, and the day settings. */
+  _renderSetup() {
+    const t = this._t;
+    const ui = this._ui;
+    const so = ui.setOpen;
+    const rooms = this._rooms.map((r) => {
+      const n = this._roomNow(r);
+      const open = so === r.id;
+      const info = [`${r.thermostats.length} ${t.thermostats_short}`, `${(r.windows || []).length} ${t.windows_short}`, ...(n.active ? [] : [t.paused])].join(' · ');
+      return `<div class="srow" data-room="${r.id}"><div class="shead" data-a="set-open" data-v="${r.id}"><span>${esc(r.name)}</span><span class="dim small">${esc(info)}</span><span class="grow"></span>
+        <ha-icon class="chev" icon="${open ? 'mdi:chevron-up' : 'mdi:chevron-down'}"></ha-icon></div>${open ? this._renderRoomSettings(r, n) : ''}</div>`;
+    }).join('');
+    let add = '';
+    if (so === 'add') {
+      const used = new Set(this._rooms.flatMap((r) => r.thermostats));
+      const climates = Object.values(this._hass.states).filter((s) => s.entity_id.startsWith('climate.'));
+      add = `<div class="panel"><label class="field">${esc(t.name)} <input data-c="ar-name" value="${esc(ui.addRoom?.name || '')}"></label>
+        <div class="field">${esc(t.thermostats)}</div>
+        ${climates.map((s) => `<label class="check"><input type="checkbox" data-c="ar-th" data-v="${s.entity_id}" ${ui.addRoom?.thermostats.includes(s.entity_id) ? 'checked' : ''}> ${esc(s.attributes.friendly_name || s.entity_id)}${used.has(s.entity_id) ? ' <span class="dim">(✓)</span>' : ''}</label>`).join('')}
+        <div class="dim small">${esc(t.new_room_paused)}</div>
+        <div class="actions"><span class="grow"></span><button class="btn flat small" data-a="set-open" data-v="add">${esc(t.cancel)}</button><button class="btn small" data-a="add-room">${esc(t.create)}</button></div></div>`;
+    }
+    return `<div class="stitle">${esc(t.rooms)}</div>${rooms}
+      <div class="srow"><div class="shead" data-a="set-open" data-v="add"><span class="accent">+ ${esc(t.add_room)}</span></div>${add}</div>
+      <div class="stitle">${esc(t.day_settings)}</div>
+      <div class="srow"><div class="shead" data-a="set-open" data-v="days"><span>${esc(t.day_settings_sub)}</span><span class="grow"></span>
+        <ha-icon class="chev" icon="${so === 'days' ? 'mdi:chevron-up' : 'mdi:chevron-down'}"></ha-icon></div>${so === 'days' ? this._renderSettings() : ''}</div>`;
+  }
+
+  _renderRoomSettings(room, n) {
     const t = this._t;
     const d = this._draftFor(room);
     const climates = Object.values(this._hass.states).filter((s) => s.entity_id.startsWith('climate.'));
@@ -1114,7 +1212,9 @@ class WeekheatCard extends Base {
       ${contacts.map((s) => `<label class="check"><input type="checkbox" data-c="r-win" data-v="${s.entity_id}" ${d.windows.includes(s.entity_id) ? 'checked' : ''}> ${esc(s.attributes.friendly_name || s.entity_id)}</label>`).join('')}
       <label class="field">${esc(t.window_delay)} <input type="number" inputmode="numeric" min="0" max="900" step="5" data-c="r-delay" value="${esc(d.window_delay)}"></label>
       <div class="dim small">${esc(t.window_help)}</div>
-      <div class="actions"><span class="grow"></span><button class="btn small" data-a="save-room">${esc(t.save)}</button></div></div>`;
+      <div class="actions"><button class="btn flat small" data-a="active">${esc(n.active ? t.pause_room : t.activate_room)}</button>
+        <span class="grow"></span><button class="btn small" data-a="save-room">${esc(t.save)}</button></div>
+      <div class="dim small">${esc(t.pause_help)}</div></div>`;
   }
 
   _renderDays() {
@@ -1125,7 +1225,8 @@ class WeekheatCard extends Base {
     const fmt = new Intl.DateTimeFormat(this._lang === 'de' ? 'de-AT' : 'en-GB', { day: 'numeric', month: 'numeric' });
     return this._days.map((d) => {
       const label = d.date === today ? t.today : d.date === addDays(today, 1) ? t.tomorrow : t.wd_short[d.weekday];
-      const plans = this._rooms.map((r) => `${r.name}: ${this._planName(r, planForDay(r, d, fr))}`).join(' · ');
+      const per = this._rooms.map((r) => [r.name, this._planName(r, planForDay(r, d, fr))]);
+      const plans = per.length > 1 && per.every(([, p]) => p === per[0][1]) ? `${t.all_rooms}: ${per[0][1]}` : per.map(([r, p]) => `${r}: ${p}`).join(' · ');
       const edit = this._ui.dayEdit?.date === d.date ? this._renderDayEdit(d) : '';
       return `<div class="day ${d.free ? 'free' : ''} ${d.kind === 'exception' ? 'exc' : ''}">
         <div class="drow" data-a="day" data-v="${d.date}">
@@ -1179,7 +1280,6 @@ class WeekheatCard extends Base {
 const STYLE = `
   :host { --wh-free: var(--success-color, #43a047); --wh-manual: var(--warning-color, #ffa000); --wh-bad: var(--error-color, #db4437); }
   ha-card { padding: 12px 12px 8px; }
-  .top { display: flex; align-items: baseline; gap: 8px; justify-content: space-between; }
   .title { font-size: 1.2em; font-weight: 500; }
   .daytype { font-size: .85em; padding: 2px 8px; border-radius: 10px; background: var(--secondary-background-color); }
   .daytype.free { color: var(--wh-free); }
@@ -1194,10 +1294,7 @@ const STYLE = `
   .note { padding: 12px 4px; color: var(--secondary-text-color); }
   .room { border-top: 1px solid var(--divider-color); padding: 8px 2px; }
   .room:first-child { border-top: 0; }
-  .rhead { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; cursor: pointer; }
   .rname { font-weight: 500; }
-  .rtemp { font-size: 1.15em; text-align: right; }
-  .rline { grid-column: 1 / -1; font-size: .9em; }
   .power { border: 1px solid var(--divider-color); background: none; color: var(--secondary-text-color); width: 28px; height: 28px; border-radius: 50%; margin-right: 10px; cursor: pointer; font-size: .85em; vertical-align: middle; padding: 0; }
   .power.on { color: var(--state-climate-heat-color, #ff8a50); border-color: color-mix(in srgb, var(--state-climate-heat-color, #ff8a50) 50%, transparent); }
   .power[disabled] { opacity: .4; cursor: default; }
@@ -1232,12 +1329,66 @@ const STYLE = `
   .dunit { font-size: 15px; }
   .dsmall { font-size: 10.5px; }
   .ctrlbar { margin-top: 2px; }
+  .grow { flex: 1; }
+  .top { display: flex; align-items: center; gap: 6px; min-height: 36px; }
+  button.daytype { border: 0; cursor: pointer; font: inherit; font-size: .85em; color: var(--primary-text-color); }
+  button.daytype.on { outline: 2px solid var(--primary-color); }
+  .iconbtn { border: 0; background: none; color: var(--secondary-text-color); cursor: pointer; padding: 4px; border-radius: 50%; display: inline-flex; }
+  .iconbtn.on { color: var(--primary-color); }
+  .back { border: 0; background: none; color: var(--primary-text-color); font: inherit; font-size: 1.1em; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; padding: 0; }
+  .rhead { display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 4px 0; }
+  .ricon { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none;
+    background: color-mix(in srgb, var(--c) 18%, transparent); color: var(--c); --c: var(--secondary-text-color); }
+  .ricon.heat, .rline.heat { --c: var(--state-climate-heat-color, #ff8a50); }
+  .ricon.ok, .rline.ok { --c: var(--wh-free); }
+  .ricon.manual, .rline.manual { --c: var(--wh-manual); }
+  .ricon.window, .rline.window { --c: var(--state-climate-cool-color, #2b9af9); }
+  .ricon.paused, .rline.paused { --c: var(--secondary-text-color); }
+  .rmain { flex: 1; min-width: 0; }
+  .rline { color: var(--c); font-size: .9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rtemp { font-size: 1.9em; font-weight: 300; text-align: right; }
+  .chev { color: var(--secondary-text-color); flex: none; }
+  .rbar { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; }
+  .segc { display: inline-flex; background: var(--secondary-background-color); border-radius: 18px; padding: 3px; }
+  .segc button { border: 0; background: none; color: var(--secondary-text-color); font: inherit; font-size: .92em; padding: 5px 12px; border-radius: 15px; cursor: pointer; }
+  .segc button.on { background: var(--card-background-color); color: var(--primary-text-color); box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+  .switch { display: inline-flex; align-items: center; gap: 8px; font-size: .9em; color: var(--secondary-text-color); }
+  .tog { width: 40px; height: 22px; border-radius: 11px; border: 0; background: var(--disabled-color, #bdbdbd); position: relative; cursor: pointer; padding: 0; }
+  .tog i { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .tog.on { background: var(--state-climate-heat-color, #ff8a50); }
+  .tog.on i { left: 21px; }
+  .tog[disabled] { opacity: .4; cursor: default; }
+  .pill { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; background: var(--secondary-background-color); border-radius: 10px; padding: 8px 12px; margin: 8px 0; font-size: .92em; }
+  .foot { display: flex; justify-content: flex-end; }
+  .picks { margin: 8px 0; }
+  .pick.dirty::after { content: ' ✎'; color: var(--wh-manual); }
+  .pick.add { min-width: 2.2em; }
+  .pinfo { margin: 2px 0 6px; }
+  .chart { position: relative; height: 88px; border-radius: 8px; overflow: hidden; background: var(--secondary-background-color); }
+  .cseg { position: absolute; top: 0; bottom: 0; display: flex; align-items: flex-end; cursor: pointer; box-sizing: border-box; border-right: 1px solid var(--card-background-color, #fff); }
+  .cseg.sel { box-shadow: inset 0 0 0 2px var(--primary-text-color); }
+  .cbar { width: 100%; display: flex; justify-content: center; align-items: flex-start; font-size: .72em; color: #fff; padding-top: 3px; box-sizing: border-box; overflow: hidden; }
+  .cseg.off .cbar { background: repeating-linear-gradient(135deg, #8a9099 0 4px, #6b7078 4px 8px); }
+  .plist { margin-top: 6px; }
+  .prow2 { display: flex; padding: 9px 4px; border-bottom: 1px solid var(--divider-color); cursor: pointer; }
+  .prow2.cur { font-weight: 500; color: var(--primary-color); }
+  .pedit { display: grid; grid-template-columns: minmax(6.5em, 8em) auto auto 2em; gap: 8px; align-items: center; padding: 6px 4px; border-bottom: 1px solid var(--divider-color); background: color-mix(in srgb, var(--primary-color) 6%, transparent); }
+  .tstep { display: flex; align-items: center; gap: 6px; }
+  .tstep span { min-width: 4em; text-align: center; }
+  .round.sm { width: 30px; height: 30px; font-size: 1.1em; }
+  .round[disabled] { opacity: .35; }
+  .savebar { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 6px 8px; border-radius: 10px; background: color-mix(in srgb, var(--wh-manual) 14%, transparent); font-size: .9em; }
+  .wgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px 10px; margin: 8px 0; }
+  .wcell { display: flex; align-items: center; gap: 6px; }
+  .wcell span { width: 2.4em; flex: none; }
+  .wcell select { flex: 1; }
+  .wrow.free { margin: 8px 0 4px; }
+  .stitle { font-size: .8em; text-transform: uppercase; letter-spacing: .04em; color: var(--secondary-text-color); margin: 14px 0 4px; }
+  .srow { border-top: 1px solid var(--divider-color); }
+  .shead { display: flex; align-items: center; gap: 8px; padding: 10px 2px; cursor: pointer; }
+  .accent { color: var(--primary-color); }
   .th { display: flex; justify-content: space-between; gap: 8px; font-size: .9em; padding: 1px 0; }
   .today { margin: 8px 0 4px; font-size: .9em; }
-  .ribbon { position: relative; height: 22px; border-radius: 5px; overflow: hidden; background: var(--secondary-background-color); margin-top: 4px; }
-  .seg { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center; font-size: .72em; color: #fff; overflow: hidden; border-right: 1px solid var(--card-background-color, #fff); box-sizing: border-box; }
-  .seg.off { background: repeating-linear-gradient(135deg, #8a9099 0 4px, #6b7078 4px 8px); }
-  .seg.gap { background: transparent; }
   .now { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--primary-text-color); }
   .ticks { display: flex; justify-content: space-between; font-size: .68em; color: var(--secondary-text-color); }
   .panel { border: 1px solid var(--divider-color); border-radius: 8px; padding: 8px; margin: 8px 0; }
@@ -1277,6 +1428,8 @@ const STYLE = `
   @media (max-width: 420px) {
     .prow { grid-template-columns: minmax(7em, 8.5em) 4.5em auto 1.6em; gap: 4px; }
     .drow { grid-template-columns: 6.2em 1fr; }
+    .pedit { grid-template-columns: 1fr auto 2em; }
+    .pedit .check { grid-column: 1; grid-row: 2; }
   }
 `;
 
