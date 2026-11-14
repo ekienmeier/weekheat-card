@@ -7,6 +7,7 @@
 //   select:<css>=<value> choose a select option
 //   wait:<ms>            wait
 //   width:<px>           viewport width
+//   slide:<x>            drag the first slider's knob to x (0..1 along the bar)
 //   size:<w>x<h>         viewport size
 //   page:<name>          screenshot of the visible page (dialogs included) as <name>.png
 //   key:<key>            press a key (e.g. Escape)
@@ -66,6 +67,18 @@ for (const s of steps) {
     const [px, py] = at(x, y);
     await page.mouse.move(px, py);
     await card.screenshot({ path: `${process.env.OUT}/dragging.png` });
+    await page.mouse.up();
+    await page.waitForTimeout(800);
+  }
+  else if (cmd === 'slide') {
+    const bar = await card.locator('[data-slider] .sbar').first().boundingBox();
+    const k = await card.locator('[data-slider] .sknob').first().boundingBox();
+    const y = bar.y + bar.height / 2;
+    await page.mouse.move(k.x + k.width / 2, y);
+    await page.mouse.down();
+    const tx = bar.x + +arg * bar.width;
+    for (let i = 1; i <= 10; i++) await page.mouse.move(k.x + k.width / 2 + ((tx - k.x - k.width / 2) * i) / 10, y);
+    await card.screenshot({ path: `${process.env.OUT}/sliding.png` });
     await page.mouse.up();
     await page.waitForTimeout(800);
   }

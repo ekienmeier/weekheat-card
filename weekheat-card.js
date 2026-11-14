@@ -2,7 +2,7 @@
 // Pairs with the Weekheat blueprints (weekheat_day script, weekheat_room automation).
 // The first part (exported) is plain logic without DOM, tested in tests/logic.test.mjs.
 
-export const VERSION = '0.6.1';
+export const VERSION = '0.7.0';
 export const WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const SCHEDULE_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 export const ROOM_BLUEPRINT = 'weekheat_room.yaml';
@@ -219,7 +219,7 @@ export const I18N = {
     confirm_delete_plan: 'Plan löschen?', saved: 'Gespeichert', error: 'Fehler',
     new_room_paused: 'Neue Räume starten pausiert: Pläne prüfen, dann aktivieren.',
     late: 'Verspätet', dismiss: 'Ausblenden', reason_weekend: 'Wochenende',
-    heating: 'Heizt', scheduled: 'Nach Plan', current: 'Raum', layout_dial: 'Regler', layout_compact: 'Kompakt',
+    heating: 'Heizt', scheduled: 'Nach Plan', current: 'Raum', layout_dial: 'Drehregler', layout_compact: 'Schieberegler',
     setpoint: 'Solltemperatur', all_rooms: 'Alle Räume', v_control: 'Regler', v_plan: 'Plan', v_week: 'Woche', heating_l_cap: 'Heizung', to: 'auf',
     rename: 'Umbenennen', unsaved: 'Nicht gespeichert', used_on: 'Verwendet', not_used: 'Derzeit in keiner Woche verwendet',
     free_days: 'Freie Tage', week_help: 'Freie Tage sind Wochenenden, Feiertage und Tage aus Kalender oder Ausnahmen.',
@@ -254,7 +254,7 @@ export const I18N = {
     confirm_delete_plan: 'Delete plan?', saved: 'Saved', error: 'Error',
     new_room_paused: 'New rooms start paused: check the plans, then activate.',
     late: 'Late', dismiss: 'Dismiss', reason_weekend: 'Weekend',
-    heating: 'Heating', scheduled: 'Scheduled', current: 'Room', layout_dial: 'Dial', layout_compact: 'Compact',
+    heating: 'Heating', scheduled: 'Scheduled', current: 'Room', layout_dial: 'Dial', layout_compact: 'Slider',
     setpoint: 'Setpoint', all_rooms: 'All rooms', v_control: 'Control', v_plan: 'Plan', v_week: 'Week', heating_l_cap: 'Heating', to: 'to',
     rename: 'Rename', unsaved: 'Not saved', used_on: 'Used', not_used: 'Not used in the week at the moment',
     free_days: 'Free days', week_help: 'Free days are weekends, public holidays and days from calendars or exceptions.',
@@ -718,6 +718,14 @@ class WeekheatCard extends Base {
       if (el) this._change(el.dataset.c, el);
     });
     root.addEventListener('pointerdown', (ev) => {
+      const sl = ev.target.closest('[data-slider]');
+      if (sl && ev.button <= 0 && ev.target.closest('.sbar')) {
+        ev.preventDefault();
+        sl.setPointerCapture(ev.pointerId);
+        this._drag = { room: this._room(sl), el: sl, slider: true };
+        this._dragMove(ev);
+        return;
+      }
       const svg = ev.target.closest('svg[data-dial]');
       if (!svg || ev.button > 0) return;
       const [x, y] = this._dialEvent(ev, svg);
@@ -736,9 +744,10 @@ class WeekheatCard extends Base {
       if (value != null) this._setTarget(room, value, 300);
     };
     root.addEventListener('pointerup', end);
-    root.addEventListener('pointercancel', end);
+    // Cancelled (e.g. the page scrolled instead): drop the value, write nothing.
+    root.addEventListener('pointercancel', () => { if (this._drag) { this._drag = null; this._render(); } });
     root.addEventListener('keydown', (ev) => {
-      const svg = ev.target.closest?.('svg[data-dial]');
+      const svg = ev.target.closest?.('svg[data-dial], [data-slider]');
       if (!svg) return;
       const k = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[ev.key];
       if (!k) return;
@@ -747,7 +756,7 @@ class WeekheatCard extends Base {
       const n = this._roomNow(room);
       const base = this._stepTarget?.room === room.id ? this._stepTarget.value : (n.target ?? n.wanted ?? 20);
       this._setTarget(room, base + k * n.step, 700);
-      this.shadowRoot.querySelector(`[data-room="${room.id}"] svg[data-dial]`)?.focus();
+      this.shadowRoot.querySelector(`[data-room="${room.id}"] svg[data-dial], [data-room="${room.id}"] [data-slider]`)?.focus();
     });
     root.addEventListener('focusout', () => { if (this._pending) { this._pending = false; setTimeout(() => this._render(), 0); } });
   }
@@ -773,6 +782,18 @@ class WeekheatCard extends Base {
   _dragMove(ev) {
     const { room, svg } = this._drag;
     const n = this._roomNow(room);
+    if (this._drag.slider) {
+      const b = this._drag.el.querySelector('.sbar').getBoundingClientRect();
+      const lo = this._config.dial_min;
+      const hi = this._config.dial_max;
+      const x = Math.max(0, Math.min(1, (ev.clientX - b.left) / b.width));
+      const v = Math.max(lo, Math.min(hi, Math.round((lo + x * (hi - lo)) / n.step) * n.step));
+      if (v === this._drag.value) return;
+      this._drag.value = v;
+      this._drag.el.innerHTML = this._sliderHtml(room, n, v);
+      this._drag.el.setAttribute('aria-valuenow', v);
+      return;
+    }
     const [x, y] = this._dialEvent(ev, svg);
     const v = dialValue(x, y, this._config.dial_min, this._config.dial_max, n.step);
     if (v === this._drag.value) return;
@@ -1089,7 +1110,7 @@ class WeekheatCard extends Base {
     const ctrl = this._layout === 'dial' ? `<div class="dialbox">
         <svg data-dial viewBox="0 0 200 200" tabindex="0" role="slider" aria-label="${esc(t.setpoint)}" aria-valuemin="${MIN_T}" aria-valuemax="${MAX_T}" aria-valuenow="${shown ?? ''}">${this._dialSvg(room, n, shown)}</svg>
         <div class="ctrl dialctrl"><button class="round" data-a="step" data-v="-1">−</button><button class="round" data-a="step" data-v="1">+</button></div></div>`
-      : `<div class="ctrl"><button class="round" data-a="step" data-v="-1">−</button><div class="target">${fmtTemp(shown, this._lang)}</div><button class="round" data-a="step" data-v="1">+</button></div>`;
+      : `<div class="slider" data-slider tabindex="0" role="slider" aria-label="${esc(t.setpoint)}" aria-valuemin="${this._config.dial_min}" aria-valuemax="${this._config.dial_max}" aria-valuenow="${shown ?? ''}">${this._sliderHtml(room, n, shown)}</div>`;
     let next = '';
     if (n.at) {
       const name = this._planName(room, n.plan);
@@ -1132,8 +1153,7 @@ class WeekheatCard extends Base {
       parts.push(`<circle cx="${hx.toFixed(2)}" cy="${hy.toFixed(2)}" r="9" class="dhandle${v <= OFF_T ? ' off' : ''}"/>`);
     }
     const off = v != null && v <= OFF_T;
-    const status = !n.active ? t.paused : n.heatingOff ? t.heating_off : n.windowOpen ? t.window_open : n.manual ? t.manual : n.heating ? t.heating : t.scheduled;
-    const cls = !n.active ? 'dim' : n.heatingOff ? 'dim' : n.windowOpen ? 'window' : n.manual ? 'manual' : n.heating ? 'heat' : 'dim';
+    const { status, cls } = this._ctlStatus(n);
     const big = v == null ? '–' : off ? t.off : Number(v).toLocaleString(this._lang === 'de' ? 'de-AT' : 'en-GB', { maximumFractionDigits: 1 });
     const cur = n.current != null ? `${t.current} ${fmtTemp(Math.round(n.current * 10) / 10, this._lang)}` : '';
     const heat = n.heating && cls !== 'heat' ? `<tspan class="heat"> · ${esc(t.heating)}</tspan>` : '';
@@ -1142,6 +1162,37 @@ class WeekheatCard extends Base {
       `<text x="100" y="140" class="dsmall">${esc(cur)}</text>`);
     if (n.manual && n.active && n.wanted != null) parts.push(`<text x="100" y="156" class="dsmall">${esc(t.plan)} ${esc(fmtTemp(n.wanted, this._lang))}</text>`);
     return parts.join('');
+  }
+
+  /** Status word and colour class above the setpoint (dial and slider). */
+  _ctlStatus(n) {
+    const t = this._t;
+    const status = !n.active ? t.paused : n.heatingOff ? t.heating_off : n.windowOpen ? t.window_open : n.manual ? t.manual : n.heating ? t.heating : t.scheduled;
+    const cls = !n.active ? 'dim' : n.heatingOff ? 'dim' : n.windowOpen ? 'window' : n.manual ? 'manual' : n.heating ? 'heat' : 'dim';
+    return { status, cls };
+  }
+
+  /** Inside of the slider for setpoint `v`: the value and status, then a bar from dial_min to dial_max filled
+   * up to `v`, a tick for the room temperature, a dot under the bar for the plan's value when it differs, and the knob. */
+  _sliderHtml(room, n, v) {
+    const t = this._t;
+    const L = this._lang;
+    const lo = this._config.dial_min;
+    const hi = this._config.dial_max;
+    const pct = (x) => Math.max(0, Math.min(100, ((x - lo) / (hi - lo)) * 100)).toFixed(2);
+    const off = v != null && v <= OFF_T;
+    const { status, cls } = this._ctlStatus(n);
+    const heat = n.heating && cls !== 'heat' ? ` <span class="heat">· ${esc(t.heating)}</span>` : '';
+    const sub = [n.current != null ? `${t.current} ${fmtTemp(Math.round(n.current * 10) / 10, L)}` : '',
+      n.manual && n.active && n.wanted != null ? `${t.plan} ${fmtTemp(n.wanted, L)}` : ''].filter(Boolean).join(' · ');
+    return `<div class="stop"><span class="sbig ${off ? 'off' : ''}">${esc(v == null ? '–' : off ? t.off : fmtTemp(v, L))}</span>
+        <span class="sstat ${cls}">${esc(status)}${heat}</span><span class="grow"></span><span class="dim small">${esc(sub)}</span></div>
+      <div class="sbar"><div class="strack"></div>
+        ${v != null ? `<div class="sfill ${off ? 'off' : ''}" style="width:${pct(v)}%"></div>` : ''}
+        ${n.wanted != null && n.manual && n.active ? `<div class="splan" style="left:${pct(n.wanted)}%"></div>` : ''}
+        ${n.current != null ? `<div class="scur" style="left:${pct(n.current)}%"></div>` : ''}
+        ${v != null ? `<div class="sknob ${off ? 'off' : ''}" style="left:${pct(v)}%"></div>` : ''}</div>
+      <div class="sscale"><span>${esc(fmtTemp(lo, L))}</span><span>${esc(fmtTemp(hi, L))}</span></div>`;
   }
 
   /** Is the plan's draft different from what is saved? */
@@ -1384,6 +1435,25 @@ const STYLE = `
   .dunit { font-size: 15px; }
   .dsmall { font-size: 10.5px; }
   .ctrlbar { margin-top: 2px; }
+  .slider { margin: 10px 0 4px; outline: none; user-select: none; -webkit-user-select: none; }
+  .stop { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .sbig { font-size: 2.1em; font-weight: 300; }
+  .sstat { font-size: .9em; color: var(--secondary-text-color); }
+  .sstat.heat, .sstat .heat { color: var(--state-climate-heat-color, #ff8a50); }
+  .sstat.manual { color: var(--wh-manual); }
+  .sstat.window { color: var(--state-climate-cool-color, #2b9af9); }
+  .sbar { position: relative; height: 36px; margin: 2px 12px 0; cursor: pointer; touch-action: pan-y; }
+  .strack, .sfill { position: absolute; left: 0; top: 14px; height: 8px; border-radius: 4px; }
+  .strack { right: 0; background: var(--secondary-background-color, #e5e5e5); }
+  .sfill { background: var(--state-climate-heat-color, #ff8a50); }
+  .sfill.off { background: var(--state-climate-off-color, #8a9099); }
+  .scur { position: absolute; top: 7px; width: 3px; height: 22px; margin-left: -1.5px; border-radius: 2px; background: var(--primary-text-color); }
+  .splan { position: absolute; top: 27px; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; background: var(--wh-manual); }
+  .sknob { position: absolute; top: 6px; width: 24px; height: 24px; margin-left: -12px; border-radius: 50%; box-sizing: border-box;
+    background: var(--card-background-color, #fff); border: 4px solid var(--state-climate-heat-color, #ff8a50); }
+  .sknob.off { border-color: var(--state-climate-off-color, #8a9099); }
+  .slider:focus-visible .sknob { box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary-color) 35%, transparent); }
+  .sscale { display: flex; justify-content: space-between; font-size: .72em; color: var(--secondary-text-color); }
   .grow { flex: 1; }
   .top { display: flex; align-items: center; gap: 6px; min-height: 36px; }
   button.daytype { border: 0; cursor: pointer; font: inherit; font-size: .85em; color: var(--primary-text-color); }
