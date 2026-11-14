@@ -64,7 +64,6 @@ Status: early (0.6). Tested with Aqara E1/W600 thermostats through HomeKit Contr
    type: custom:weekheat-card
    title: Heizung
    ```
-   For a compact room list (e.g. on the main dashboard) add `display: list`.
 5. **Rooms**: on the card, *Add room*: a name and the thermostats. This creates two starter plans
    (working day, free day), a state helper and the room automation, **paused**. Adjust the plans,
    then activate the room on the card.
@@ -77,7 +76,6 @@ Status: early (0.6). Tested with Aqara E1/W600 thermostats through HomeKit Contr
 | `rooms` | all | Room automations to show, in this order (entity ids or automation ids) |
 | `days` | 14 | Days in the day list |
 | `day_script` | `script.weekheat_day` | The day script |
-| `display` | `full` | `full`: rooms open in place, with the day list and setup. `list`: only the room rows (status, room temperature, setpoint); tapping one opens the room in a dialog. Handy on an overview dashboard. |
 | `layout` | `dial` | `dial` or `compact`: how an opened room shows its setpoint. Each browser remembers the last layout picked on the card. |
 | `dial_min`, `dial_max` | 5, 30 | Scale of the dial in °C |
 

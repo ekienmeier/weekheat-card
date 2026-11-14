@@ -2,7 +2,7 @@
 // Pairs with the Weekheat blueprints (weekheat_day script, weekheat_room automation).
 // The first part (exported) is plain logic without DOM, tested in tests/logic.test.mjs.
 
-export const VERSION = '0.6.0';
+export const VERSION = '0.6.1';
 export const WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const SCHEDULE_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 export const ROOM_BLUEPRINT = 'weekheat_room.yaml';
@@ -212,7 +212,7 @@ export const I18N = {
     holiday_calendar: 'Feiertagskalender', add_rule: 'Regel hinzufügen', none: '—',
     err_first: 'Die erste Periode muss um 00:00 beginnen.', err_order: 'Die Zeiten müssen aufsteigen.',
     err_temp: `Temperaturen zwischen ${MIN_T} und ${MAX_T} °C.`,
-    no_directory: 'Die Räume erscheinen hier, sobald ein Administrator die Weekheat-Karte einmal geöffnet hat.', close: 'Schließen',
+    no_directory: 'Die Räume erscheinen hier, sobald ein Administrator die Weekheat-Karte einmal geöffnet hat.',
     no_rooms: 'Noch keine Räume. Ein Raum ist eine Automation aus dem Blueprint „Weekheat room“.',
     no_script: 'Das Skript „Weekheat day“ fehlt.', unavailable: 'nicht erreichbar',
     plan_in_use: 'Dieser Plan wird in der Woche verwendet und kann nicht gelöscht werden.',
@@ -247,7 +247,7 @@ export const I18N = {
     holiday_calendar: 'Holiday calendar', add_rule: 'Add rule', none: '—',
     err_first: 'The first period must start at 00:00.', err_order: 'Times must increase.',
     err_temp: `Temperatures between ${MIN_T} and ${MAX_T} °C.`,
-    no_directory: 'The rooms show here once an administrator has opened the Weekheat card.', close: 'Close',
+    no_directory: 'The rooms show here once an administrator has opened the Weekheat card.',
     no_rooms: 'No rooms yet. A room is an automation made from the "Weekheat room" blueprint.',
     no_script: 'The "Weekheat day" script is missing.', unavailable: 'unavailable',
     plan_in_use: 'This plan is used in the week and cannot be deleted.',
@@ -348,7 +348,7 @@ class WeekheatCard extends Base {
     let saved = null;
     try { saved = localStorage.getItem('weekheat-layout'); } catch (e) { /* no storage */ }
     this._layout = ['dial', 'compact'].includes(saved) ? saved : this._config.layout === 'compact' ? 'compact' : 'dial';
-    this._ui = this._ui || { view: 'rooms', open: null, dialog: null, sub: {}, planSel: {}, editPeriod: null, renamePlan: null, setOpen: null,
+    this._ui = this._ui || { view: 'rooms', open: null, sub: {}, planSel: {}, editPeriod: null, renamePlan: null, setOpen: null,
       dayEdit: null, addRoom: null, addPlan: null };
     this._render();
   }
@@ -376,7 +376,6 @@ class WeekheatCard extends Base {
     clearInterval(this._minute);
     if (this._unsub) { this._unsub.then((u) => u()).catch(() => {}); this._unsub = null; }
     if (this._dirUnsub) { this._dirUnsub.then((u) => u()).catch(() => {}); this._dirUnsub = null; }
-    this._dialog?.open && this._dialog.close();
   }
 
   get _t() { return I18N[this._lang] || I18N.en; }
@@ -734,7 +733,6 @@ class WeekheatCard extends Base {
       if (!this._drag) return;
       const { room, value } = this._drag;
       this._drag = null;
-      this._dragEnd = Date.now();
       if (value != null) this._setTarget(room, value, 300);
     };
     root.addEventListener('pointerup', end);
@@ -803,11 +801,9 @@ class WeekheatCard extends Base {
     switch (a) {
       case 'view': ui.view = ui.view === el.dataset.v ? 'rooms' : el.dataset.v; ui.dayEdit = null; break;
       case 'toggle':
-        if (this._config.display === 'list') ui.dialog = room.id;
-        else ui.open = ui.open === room.id ? null : room.id;
+        ui.open = ui.open === room.id ? null : room.id;
         ui.editPeriod = null; ui.addPlan = null; ui.renamePlan = null;
         break;
-      case 'close-dialog': this._dialog.close(); return;
       case 'sub': ui.sub[room.id] = el.dataset.v; ui.editPeriod = null; ui.addPlan = null; ui.renamePlan = null; break;
       case 'plan-sel': ui.planSel[room.id] = el.dataset.v; ui.editPeriod = null; ui.addPlan = null; ui.renamePlan = null; break;
       case 'edit-period': {
@@ -996,7 +992,6 @@ class WeekheatCard extends Base {
     if (!this._hass) return;
     const t = this._t;
     const ui = this._ui;
-    const list = this._config.display === 'list';
     const view = ui.view === 'settings' && !this._admin ? 'rooms' : ui.view || 'rooms';
     let body;
     if (this._noDirectory && !this._admin) body = `<div class="note">${esc(t.no_directory)}</div>`;
@@ -1008,7 +1003,7 @@ class WeekheatCard extends Base {
       .map((n) => `<div class="banner warn"><span>${esc(n.message)}</span><button class="link" data-a="dismiss" data-v="${esc(n.notification_id)}">${esc(t.dismiss)}</button></div>`).join('');
     const today = this._days ? this._today() : null;
     const dayChip = today ? `<button class="daytype ${today.free ? 'free' : ''} ${view === 'days' ? 'on' : ''}" data-a="view" data-v="days" title="${esc(t.days)}">${esc(today.free ? t.free_day : t.working_day)}${today.plan ? ` · ${esc(today.plan)}` : ''}</button>` : '';
-    const gear = this._admin && !list ? `<button class="iconbtn ${view === 'settings' ? 'on' : ''}" data-a="view" data-v="settings" title="${esc(t.settings)}"><ha-icon icon="mdi:cog"></ha-icon></button>` : '';
+    const gear = this._admin ? `<button class="iconbtn ${view === 'settings' ? 'on' : ''}" data-a="view" data-v="settings" title="${esc(t.settings)}"><ha-icon icon="mdi:cog"></ha-icon></button>` : '';
     const title = view === 'rooms'
       ? (this._config.title ? `<div class="title">${esc(this._config.title)}</div>` : '<span></span>')
       : `<button class="back" data-a="view" data-v="rooms"><ha-icon icon="mdi:chevron-left"></ha-icon>${esc(view === 'days' ? t.days : t.settings)}</button>`;
@@ -1017,31 +1012,13 @@ class WeekheatCard extends Base {
     const noScript = this._rooms && this._admin && !this._script ? `<div class="banner bad">${esc(t.no_script)}</div>` : '';
     this._cardEl.innerHTML = `<div class="top">${title}<span class="grow"></span>${dayChip}${gear}</div>
       ${msg}${err}${noScript}${notes}<div class="body">${body}</div>`;
-    this._renderDialog(msg);
   }
 
-  /** The shadow DOM's fixed parts: styles, the card, and the room dialog (display: list). The dialog element
-   * stays, only its content is redrawn, so it doesn't close or flicker on updates. */
+  /** The shadow DOM's fixed parts: the styles and the card. */
   _skeleton() {
     if (this._cardEl) return;
-    this.shadowRoot.innerHTML = `<style>${STYLE}</style><ha-card></ha-card><dialog class="dlg"></dialog>`;
+    this.shadowRoot.innerHTML = `<style>${STYLE}</style><ha-card></ha-card>`;
     this._cardEl = this.shadowRoot.querySelector('ha-card');
-    this._dialog = this.shadowRoot.querySelector('dialog');
-    this._dialog.addEventListener('close', () => {
-      if (!this._ui.dialog) return;
-      Object.assign(this._ui, { dialog: null, editPeriod: null, addPlan: null, renamePlan: null });
-      this._render(true);
-    });
-    // A click on the backdrop lands on the dialog itself (the content fills it); not right after a dial drag.
-    this._dialog.addEventListener('click', (ev) => { if (ev.target === this._dialog && Date.now() - (this._dragEnd || 0) > 400) this._dialog.close(); });
-  }
-
-  _renderDialog(msg) {
-    const d = this._dialog;
-    const room = this._ui.dialog && this._rooms?.find((r) => r.id === this._ui.dialog);
-    if (!room) { if (d.open) d.close(); return; }
-    d.innerHTML = `<div class="dbody" tabindex="-1" autofocus>${msg}${this._renderRoom(room, true)}</div>`;
-    if (!d.open) d.showModal();
   }
 
   /** Day chart: one bar per period, its height by temperature; Off hatched and low. */
@@ -1082,21 +1059,17 @@ class WeekheatCard extends Base {
     return this._rooms.map((r) => this._renderRoom(r)).join('');
   }
 
-  /** A room: its row, and when open (or in the dialog) its views. */
-  _renderRoom(room, inDialog = false) {
+  _renderRoom(room) {
     const t = this._t;
     const n = this._roomNow(room);
-    const list = this._config.display === 'list';
-    const open = inDialog || (!list && this._ui.open === room.id);
+    const open = this._ui.open === room.id;
     const st = this._status(room, n);
-    const end = inDialog ? `<button class="iconbtn" data-a="close-dialog" title="${esc(t.close)}"><ha-icon icon="mdi:close"></ha-icon></button>`
-      : `<ha-icon class="chev" icon="${list ? 'mdi:chevron-right' : open ? 'mdi:chevron-up' : 'mdi:chevron-down'}"></ha-icon>`;
-    const head = `<div class="rhead ${inDialog ? 'fixed' : ''}" ${inDialog ? '' : 'data-a="toggle"'}>
+    const head = `<div class="rhead" data-a="toggle">
       <div class="ricon ${st.cls}"><ha-icon icon="${st.icon}"></ha-icon></div>
       <div class="rmain"><div class="rname">${esc(room.name)}${n.unavailable ? ` <span class="chip bad">${esc(t.unavailable)}</span>` : ''}</div>
         <div class="rline ${st.cls}">${esc(st.text)}</div></div>
       <div class="rtemp">${n.current != null ? `${Number(Math.round(n.current * 10) / 10).toLocaleString(this._lang === 'de' ? 'de-AT' : 'en-GB')}°` : '–'}</div>
-      ${end}</div>`;
+      <ha-icon class="chev" icon="${open ? 'mdi:chevron-up' : 'mdi:chevron-down'}"></ha-icon></div>`;
     if (!open) return `<div class="room" data-room="${room.id}">${head}</div>`;
     const sub = this._ui.sub[room.id] || 'control';
     const seg = ['control', 'plan', 'week'].map((k) => `<button class="${sub === k ? 'on' : ''}" data-a="sub" data-v="${k}">${esc(t[`v_${k}`])}</button>`).join('');
@@ -1419,12 +1392,6 @@ const STYLE = `
   .iconbtn.on { color: var(--primary-color); }
   .back { border: 0; background: none; color: var(--primary-text-color); font: inherit; font-size: 1.1em; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; padding: 0; }
   .rhead { display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 4px 0; }
-  .rhead.fixed { cursor: default; }
-  dialog.dlg { border: 0; padding: 0; width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; box-sizing: border-box;
-    border-radius: var(--ha-dialog-border-radius, 24px); background: var(--ha-card-background, var(--card-background-color, #fff));
-    color: var(--primary-text-color); box-shadow: 0 8px 32px rgba(0,0,0,.35); font-family: var(--paper-font-body1_-_font-family, inherit); }
-  dialog.dlg::backdrop { background: rgba(0,0,0,.45); }
-  .dbody { padding: 12px 16px 16px; outline: none; }
   .ricon { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none;
     background: color-mix(in srgb, var(--c) 18%, transparent); color: var(--c); --c: var(--secondary-text-color); }
   .ricon.heat, .rline.heat { --c: var(--state-climate-heat-color, #ff8a50); }
@@ -1513,9 +1480,6 @@ const STYLE = `
   .picks { display: flex; flex-wrap: wrap; gap: 6px; }
   .pick { border: 1px solid var(--divider-color); background: none; color: var(--primary-text-color); border-radius: 14px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: .9em; }
   .pick.on { border-color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 15%, transparent); }
-  @media (max-width: 600px) {
-    dialog.dlg { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; }
-  }
   @media (max-width: 420px) {
     .prow { grid-template-columns: minmax(7em, 8.5em) 4.5em auto 1.6em; gap: 4px; }
     .drow { grid-template-columns: 6.2em 1fr; }

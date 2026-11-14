@@ -275,12 +275,6 @@ titles (`Working day`, `Free day`) are read too. Writing uses `calendar.create_e
 - **Language**: German and English, by the HA user's language.
 - **Banners**: HA was down (above); room automation disabled; day script or a calendar missing.
 
-- **List mode** (`display: list`): only the room rows and the day chip, no setup. Tapping a room opens
-  its views (Control, Plan, Week, the heating switch) in a dialog: a native `<dialog>` shown with
-  `showModal()`, so it sits in the browser's top layer and no dashboard layout can clip it. The
-  dialog element stays in the shadow DOM; renders only replace its content, so it doesn't close or
-  flicker on state updates. Full screen below 600 px; Esc, ✕ or the backdrop close it.
-
 **Admin rights:** creating and editing helpers, scripts and automations is admin-only in HA. So
 editing plans, the week, settings and rooms needs an admin user. Other users see everything, set
 thermostats, switch a room's heating, and set exceptions (calendar events need no admin).
