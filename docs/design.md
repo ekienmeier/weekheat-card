@@ -275,9 +275,32 @@ titles (`Working day`, `Free day`) are read too. Writing uses `calendar.create_e
 - **Language**: German and English, by the HA user's language.
 - **Banners**: HA was down (above); room automation disabled; day script or a calendar missing.
 
+- **List mode** (`display: list`): only the room rows and the day chip, no setup. Tapping a room opens
+  its views (Control, Plan, Week, the heating switch) in a dialog: a native `<dialog>` shown with
+  `showModal()`, so it sits in the browser's top layer and no dashboard layout can clip it. The
+  dialog element stays in the shadow DOM; renders only replace its content, so it doesn't close or
+  flicker on state updates. Full screen below 600 px; Esc, ✕ or the backdrop close it.
+
 **Admin rights:** creating and editing helpers, scripts and automations is admin-only in HA. So
-editing plans, the week, settings and rooms needs an admin user; other users see everything and can
-change thermostats and exceptions. (To be confirmed for `schedule/update` while building.)
+editing plans, the week, settings and rooms needs an admin user. Other users see everything, set
+thermostats, switch a room's heating, and set exceptions (calendar events need no admin).
+
+**Room directory:** reading an automation's configuration (`config/automation/config/<id>`) is
+admin-only, so a non-admin's card can't find out which thermostats, plans and helpers make up a room.
+An admin's card therefore publishes the rooms to HA's frontend system data under the key `weekheat`
+(`frontend/set_system_data`: only admins write, every user reads and can subscribe):
+
+```json
+{ "v": 1, "script": true, "exceptions": "calendar.…",
+  "rooms": [{ "entity", "id", "name", "thermostats", "plans", "week", "free_day", "state",
+              "windows", "window_delay", "heating_switch" }] }
+```
+
+It is rewritten (only when it differs) each time an admin's card loads, and after the card saves a
+room or the day settings. A change made in HA's automation editor reaches other users the next time
+an admin opens the card. Non-admin cards subscribe to the key and reload when it changes. Everything
+else non-admins need is readable anyway: states, `schedule/list` (the plans),
+`config/entity_registry/list`, calendar events, and calling the day script for the day list.
 
 ## Prerequisites in HA
 
@@ -307,7 +330,8 @@ change thermostats and exceptions. (To be confirmed for `schedule/update` while 
   makes a day free or names a plan (e.g. `Homeoffice`).
 - Named plans per room plus a week; free days use the free-day plan; exceptions can name a plan.
 - Starter plans as above.
-- Editing plans, the week, settings and rooms is admin-only (accepted).
+- Editing plans, the week, settings and rooms is admin-only (accepted). Using the card (thermostats,
+  heating switch, exceptions) works for every user (2026-11-14).
 
 ## Open questions
 

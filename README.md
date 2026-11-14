@@ -25,7 +25,7 @@ single setpoint.
 Based on the idea and structure of [Temperate](https://github.com/xman2000/temperate-card) by Stephen
 (MIT), which does this for heat/cool thermostats with one day plan. Design: [docs/design.md](docs/design.md).
 
-Status: early (0.1). Tested with Aqara E1/W600 thermostats through HomeKit Controller on HA 2026.11.
+Status: early (0.6). Tested with Aqara E1/W600 thermostats through HomeKit Controller on HA 2026.11.
 
 ## Parts
 
@@ -43,8 +43,9 @@ Status: early (0.1). Tested with Aqara E1/W600 thermostats through HomeKit Contr
 - Optional: the [Holiday](https://www.home-assistant.io/integrations/holiday/) integration (holiday
   names) and calendars with keyword events (e.g. CalDAV).
 - **Switch off the thermostats' own schedules**, otherwise they overwrite the plan at their own times.
-- Editing on the card (plans, week, settings, rooms) needs an administrator user. For now the card as
-  a whole needs an administrator, because it reads the room automations' configuration.
+- Editing plans, the week, settings and rooms on the card needs an administrator user. Other users can
+  set temperatures, switch a room's heating on and off and set day exceptions; their card shows the
+  rooms once an administrator has opened the card (it publishes the rooms for them).
 
 ## Installation
 
@@ -63,6 +64,7 @@ Status: early (0.1). Tested with Aqara E1/W600 thermostats through HomeKit Contr
    type: custom:weekheat-card
    title: Heizung
    ```
+   For a compact room list (e.g. on the main dashboard) add `display: list`.
 5. **Rooms**: on the card, *Add room*: a name and the thermostats. This creates two starter plans
    (working day, free day), a state helper and the room automation, **paused**. Adjust the plans,
    then activate the room on the card.
@@ -75,6 +77,7 @@ Status: early (0.1). Tested with Aqara E1/W600 thermostats through HomeKit Contr
 | `rooms` | all | Room automations to show, in this order (entity ids or automation ids) |
 | `days` | 14 | Days in the day list |
 | `day_script` | `script.weekheat_day` | The day script |
+| `display` | `full` | `full`: rooms open in place, with the day list and setup. `list`: only the room rows (status, room temperature, setpoint); tapping one opens the room in a dialog. Handy on an overview dashboard. |
 | `layout` | `dial` | `dial` or `compact`: how an opened room shows its setpoint. Each browser remembers the last layout picked on the card. |
 | `dial_min`, `dial_max` | 5, 30 | Scale of the dial in °C |
 
@@ -89,8 +92,8 @@ also be added in Home Assistant's calendar view.
 - `tests/`: logic tests, `node --test tests/*.test.mjs` (Node 22).
 - `tools/ha.py`: a small REST/WebSocket client (URL and token from `~/.config/weekheat/`).
 - `tools/deploy_blueprint.py`: save a blueprint from this repo to Home Assistant.
-- `tools/shoot.mjs`: screenshots of a dashboard with Playwright, with the working copy of the card in place of
-  the installed one.
+- `tools/shoot.mjs`: screenshots of a dashboard with Playwright (card or whole page, dialogs included), with
+  the working copy of the card in place of the installed one.
 
 ## License
 

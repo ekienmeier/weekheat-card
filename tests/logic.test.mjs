@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   toMin, fromMin, nowIn, addDays, blocksToPeriods, periodsToBlocks, checkPeriods, periodAt, slugify,
   planLabel, matchPlan, planForDay, parseException, exceptionTitle, reasonText, fmtTemp, STARTER,
+  roomFromInput, DIRECTORY_FIELDS,
 } from '../weekheat-card.js';
 
 test('time', () => {
@@ -108,4 +109,13 @@ test('dial: angle and pointer value', async () => {
   assert.equal(dialValue(DIAL.cx - 10, DIAL.cy + 80, 5, 30, 0.5), 5);
   assert.equal(dialValue(DIAL.cx + 10, DIAL.cy + 80, 5, 30, 0.5), 30);
   assert.equal(dialValue(DIAL.cx, DIAL.cy - 80, 5, 30, 0.5), 17.5);
+});
+
+test('roomFromInput reads blueprint inputs with defaults', () => {
+  const r = roomFromInput({ room_name: 'Bad', thermostats: 'climate.a', plans: ['schedule.x'], heating_switch: ['input_boolean.h'] }, 'Weekheat Bad');
+  assert.deepEqual(r, { name: 'Bad', thermostats: ['climate.a'], plans: ['schedule.x'], week: {}, free_day: undefined, state: undefined,
+    windows: [], window_delay: 30, heating_switch: 'input_boolean.h' });
+  assert.equal(roomFromInput({}, 'Alias').name, 'Alias');
+  assert.equal(roomFromInput({}, 'A').heating_switch, null);
+  for (const k of DIRECTORY_FIELDS.filter((k) => !['entity', 'id'].includes(k))) assert.ok(k in r, k);
 });

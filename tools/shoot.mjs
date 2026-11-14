@@ -7,6 +7,9 @@
 //   select:<css>=<value> choose a select option
 //   wait:<ms>            wait
 //   width:<px>           viewport width
+//   size:<w>x<h>         viewport size
+//   page:<name>          screenshot of the visible page (dialogs included) as <name>.png
+//   key:<key>            press a key (e.g. Escape)
 //   drag:<x>,<y>         drag the first dial's handle to (x, y) in dial coordinates (0..200)
 // Example: node shoot.mjs /weekheat-test/w shot:start 'click:[data-a=toggle]' shot:open
 import { chromium } from 'playwright';
@@ -42,7 +45,7 @@ try {
   process.exit(1);
 }
 await page.waitForTimeout(6000);
-const card = page.locator('weekheat-card').first();
+const card = page.locator(process.env.CARD_SEL || 'weekheat-card').first();
 for (const s of steps) {
   const [cmd, ...rest] = s.split(':');
   const arg = rest.join(':');
@@ -67,6 +70,9 @@ for (const s of steps) {
     await page.waitForTimeout(800);
   }
   else if (cmd === 'width') await page.setViewportSize({ width: +arg, height: 1400 });
+  else if (cmd === 'size') { const [w, h] = arg.split('x').map(Number); await page.setViewportSize({ width: w, height: h }); }
+  else if (cmd === 'page') await page.screenshot({ path: `${process.env.OUT}/${arg}.png` });
+  else if (cmd === 'key') { await page.keyboard.press(arg); await page.waitForTimeout(500); }
 }
 console.log(logs.join('\n') || 'no console errors');
 await browser.close();
