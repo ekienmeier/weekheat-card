@@ -237,6 +237,23 @@ back at 10:26:06); the start run set the new period at 10:26:22 and raised the n
 thermostat that is still unavailable when the start run happens is written later by the "back"
 trigger, without a notification.
 
+### Valve exercise
+
+Replaces the weekly "radiator maintenance" automation of the Aqara app. Each room automation has three
+inputs, the same in all rooms (the card writes them to all): `exercise_day` (`off` or `mon`…`sun`),
+`exercise_time` (default 13:00), `exercise_wait` (default 60 s). At that time, or on the event
+`weekheat_exercise` (optional `entity_id`: one room automation or a list; the card's *Run now* fires it
+without), the room's available thermostats are set to 30 °C, then after the wait to 5 °C, after the wait
+again, twice; then each gets back its setpoint from before (and its hvac mode). It runs at the start of
+the automation run, so the normal run that follows writes a new period's temperature if one began in
+between. The automation is queued, so window, plan and switch events wait for it. While it runs, the
+state helper carries `_ex` and the card shows the room as *Valve exercise*. One wait for all models: the
+W600 moves slowly and quietly, 60 s is a guess, hence configurable. Paused rooms are not exercised.
+
+Valve calibration (the thermostat learning its end positions) is not reachable from HA: over HomeKit
+the Aqara thermostats expose only setpoint, mode, temperature, battery and identify. It stays in the
+Aqara app.
+
 ## Exceptions
 
 All-day events in the Local Calendar (`calendar.weekheat_ausnahmen`). They have no size limit, survive

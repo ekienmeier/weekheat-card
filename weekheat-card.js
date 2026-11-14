@@ -2,7 +2,7 @@
 // Pairs with the Weekheat blueprints (weekheat_day script, weekheat_room automation).
 // The first part (exported) is plain logic without DOM, tested in tests/logic.test.mjs.
 
-export const VERSION = '0.7.0';
+export const VERSION = '0.8.0';
 export const WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const SCHEDULE_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 export const ROOM_BLUEPRINT = 'weekheat_room.yaml';
@@ -16,6 +16,11 @@ export function roomFromInput(i, alias) {
   return { name: i.room_name || alias, thermostats: list(i.thermostats), plans: list(i.plans), week: i.week || {},
     free_day: i.free_day, state: i.state, windows: list(i.windows), window_delay: i.window_delay ?? 30,
     heating_switch: list(i.heating_switch)[0] || null };
+}
+/** The weekly valve exercise, the same for all rooms (blueprint inputs of each room automation). */
+export const EXERCISE_DEFAULTS = { exercise_day: 'off', exercise_time: '13:00:00', exercise_wait: 60 };
+export function exerciseFromInput(i = {}) {
+  return Object.fromEntries(Object.entries(EXERCISE_DEFAULTS).map(([k, d]) => [k, i[k] ?? d]));
 }
 export const DAY_BLUEPRINT = 'weekheat_day.yaml';
 export const MIN_T = 5;
@@ -227,6 +232,10 @@ export const I18N = {
     day_settings_sub: 'Kalender, Stichwörter, Workday', pause_room: 'Raum pausieren', activate_room: 'Raum aktivieren',
     pause_help: 'Pausiert: Weekheat schreibt nichts, die Thermostate behalten ihren Wert. Zum Abschalten den Heizungsschalter des Raums verwenden.', heating_off: 'Aus', heating_l: 'Heizung', turn_on: 'Heizung einschalten', turn_off: 'Heizung ausschalten', window_open: 'Fenster offen', windows: 'Fenster- und Türkontakte',
     window_delay: 'Verzögerung (Sekunden)',
+    exercise: 'Ventilpflege', exercise_sub: 'Einmal pro Woche ganz öffnen und schließen', exercise_day: 'Tag', exercise_time: 'Uhrzeit',
+    exercise_wait: 'Wartezeit (Sekunden)', exercise_now: 'Jetzt ausführen', exercise_started: 'Ventilpflege läuft',
+    exercise_help: 'Alle Thermostate auf 30 °C, warten, auf 5 °C, warten, das Ganze zweimal; danach wieder der Wert von vorher (oder der Plan, falls inzwischen eine neue Periode begann). Dauert etwa viermal die Wartezeit. Pausierte Räume werden ausgelassen.',
+    confirm_exercise: 'Ventilpflege jetzt in allen aktiven Räumen ausführen?',
     window_help: 'Ist einer davon so lange offen, werden die Thermostate auf 5 °C gestellt; sind alle wieder zu, gilt wieder der Wert von vorher (oder der Plan, falls inzwischen eine neue Periode begann).',
   },
   en: {
@@ -262,6 +271,10 @@ export const I18N = {
     day_settings_sub: 'Calendars, keywords, Workday', pause_room: 'Pause room', activate_room: 'Activate room',
     pause_help: 'Paused: Weekheat writes nothing and the thermostats keep their value. To turn a room off, use its heating switch.', heating_off: 'Off', heating_l: 'heating', turn_on: 'Turn heating on', turn_off: 'Turn heating off', window_open: 'Window open', windows: 'Window and door sensors',
     window_delay: 'Delay (seconds)',
+    exercise: 'Valve exercise', exercise_sub: 'Open and close fully once a week', exercise_day: 'Day', exercise_time: 'Time',
+    exercise_wait: 'Wait (seconds)', exercise_now: 'Run now', exercise_started: 'Valve exercise running',
+    exercise_help: 'All thermostats to 30 °C, wait, to 5 °C, wait, twice; then the value from before again (or the plan, if a new period began in between). Takes about four times the wait. Paused rooms are left out.',
+    confirm_exercise: 'Run the valve exercise now in all active rooms?',
     window_help: 'When one of them has been open this long, the thermostats are set to 5 °C; when all are closed again, the value from before applies again (or the plan, if a new period began in between).',
   },
 };
@@ -522,13 +535,15 @@ class WeekheatCard extends Base {
     const avail = th.filter((s) => !['unavailable', 'unknown'].includes(s.state));
     const cur = avail.map((s) => s.attributes.current_temperature).filter((x) => typeof x === 'number');
     const target = avail.map((s) => s.attributes.temperature).find((x) => typeof x === 'number');
-    let saved = null;
-    try { saved = JSON.parse(h.states[room.state]?.state || '{}')._open || null; } catch (e) { /* not JSON */ }
+    let st = {};
+    try { st = JSON.parse(h.states[room.state]?.state || '{}') || {}; } catch (e) { /* not JSON */ }
+    const saved = st._open || null;
+    const exercise = !!st._ex && h.states[room.entity]?.state === 'on';
     const openWin = (room.windows || []).filter((w) => h.states[w]?.state === 'on');
     const heatingOff = !!room.heating_switch && h.states[room.heating_switch]?.state === 'off';
     const windowOpen = !heatingOff && !!saved && h.states[room.entity]?.state === 'on';
-    const manual = !heatingOff && !windowOpen && wanted != null && avail.some((s) => s.state === 'off' || Math.abs((s.attributes.temperature ?? -99) - wanted) >= 0.25);
-    return { heatingOff, windowOpen, openWin, plan, periods, at, wanted, current: cur.length ? cur.reduce((a, b) => a + b, 0) / cur.length : null, target,
+    const manual = !exercise && !heatingOff && !windowOpen && wanted != null && avail.some((s) => s.state === 'off' || Math.abs((s.attributes.temperature ?? -99) - wanted) >= 0.25);
+    return { exercise, heatingOff, windowOpen, openWin, plan, periods, at, wanted, current: cur.length ? cur.reduce((a, b) => a + b, 0) / cur.length : null, target,
       unavailable: th.length - avail.length, off: avail.some((s) => s.state === 'off'), manual,
       active: h.states[room.entity]?.state === 'on', step: avail[0]?.attributes.target_temp_step || 0.5,
       // hvac_action alone is not enough: over HomeKit the Aqara valves report "heating" whenever the mode is heat.
@@ -657,7 +672,8 @@ class WeekheatCard extends Base {
     const heatingSwitch = await this._createSwitch(name);
     const input = { room_name: name, thermostats, plans: [weekday, free], free_day: free, heating_switch: heatingSwitch,
       week: Object.fromEntries(WEEK.map((d) => [d, weekday])), state: stateEntity,
-      day_script: this._config.day_script, language: this._lang };
+      day_script: this._config.day_script, language: this._lang,
+      ...exerciseFromInput((this._allRooms || this._rooms || [])[0]?.cfg?.use_blueprint?.input) };
     // Created paused: initial_state false first, switched off, then saved again without it.
     const cfg = { alias: `Weekheat ${name}`, description: 'Weekheat', initial_state: false,
       use_blueprint: { path: this._roomBlueprint, input } };
@@ -843,7 +859,7 @@ class WeekheatCard extends Base {
       case 'set-open':
         ui.setOpen = ui.setOpen === el.dataset.v ? null : el.dataset.v;
         if (ui.setOpen === 'add') ui.addRoom = { name: '', thermostats: [] };
-        ui.draft = null; ui.settings = null;
+        ui.draft = null; ui.settings = null; ui.exercise = null;
         break;
       case 'step': {
         const n = this._roomNow(room);
@@ -928,6 +944,17 @@ class WeekheatCard extends Base {
         return;
       }
       case 'reset-settings': ui.settings = null; break;
+      case 'save-exercise': {
+        const x = this._exerciseDraft();
+        const input = { exercise_day: x.exercise_day, exercise_time: /^\d{1,2}:\d{2}$/.test(x.exercise_time) ? `${x.exercise_time}:00` : x.exercise_time,
+          exercise_wait: Math.max(10, Math.min(600, Math.round(+x.exercise_wait || 60))) };
+        this._run(async () => { for (const r of this._allRooms || this._rooms) await this._saveRoomConfig(r, input); ui.exercise = null; });
+        return;
+      }
+      case 'run-exercise':
+        if (!confirm(this._t.confirm_exercise)) return;
+        this._run(async () => { await this._hass.callWS({ type: 'fire_event', event_type: 'weekheat_exercise' }); this._flash(this._t.exercise_started); }, false);
+        return;
       case 'add-room': {
         const f = ui.addRoom;
         if (!f.name.trim() || !f.thermostats.length) return;
@@ -973,6 +1000,9 @@ class WeekheatCard extends Base {
       case 's-workday': this._settingsDraft().workday = v; break;
       case 's-exc': this._settingsDraft().exceptions = v; break;
       case 's-hol': this._settingsDraft().holidays = v; break;
+      case 'x-day': this._exerciseDraft().exercise_day = v; return;
+      case 'x-time': this._exerciseDraft().exercise_time = v; return;
+      case 'x-wait': this._exerciseDraft().exercise_wait = v; return;
       default: return;
     }
     this._render(true);
@@ -993,6 +1023,25 @@ class WeekheatCard extends Base {
         workday: i.workday || '', exceptions: i.exceptions || '', holidays: i.holidays || '' };
     }
     return this._ui.settings;
+  }
+
+  /** The valve exercise settings, as stored in the first room automation (the card writes them to all). */
+  _exerciseDraft() {
+    if (!this._ui.exercise) this._ui.exercise = exerciseFromInput((this._allRooms || this._rooms || [])[0]?.cfg?.use_blueprint?.input);
+    return this._ui.exercise;
+  }
+
+  _renderExercise() {
+    const t = this._t;
+    const x = this._exerciseDraft();
+    const days = [['off', t.off], ...WEEK.map((d) => [d, t.weekdays[d]])];
+    return `<div class="panel">
+      <label class="field">${esc(t.exercise_day)} <select data-c="x-day">${days.map(([v, l]) => `<option value="${v}" ${v === x.exercise_day ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+      <label class="field">${esc(t.exercise_time)} <input type="time" data-c="x-time" value="${esc(String(x.exercise_time).slice(0, 5))}"></label>
+      <label class="field">${esc(t.exercise_wait)} <input type="number" inputmode="numeric" min="10" max="600" step="5" data-c="x-wait" value="${esc(x.exercise_wait)}"></label>
+      <div class="dim small">${esc(t.exercise_help)}</div>
+      <div class="actions"><button class="btn flat small" data-a="run-exercise">${esc(t.exercise_now)}</button><span class="grow"></span>
+        <button class="btn small" data-a="save-exercise">${esc(t.save)}</button></div></div>`;
   }
 
   _allPlanNames() {
@@ -1065,6 +1114,7 @@ class WeekheatCard extends Base {
     const L = this._lang;
     const until = n.at?.next ? ` ${t.until} ${fromMin(n.at.next.start)}` : '';
     if (!n.active) return { icon: 'mdi:pause', cls: 'paused', text: `${t.paused}${n.target != null ? ` · ${fmtTemp(n.target, L)}` : ''}` };
+    if (n.exercise) return { icon: 'mdi:pipe-valve', cls: 'window', text: t.exercise };
     if (n.heatingOff) return { icon: 'mdi:power', cls: 'paused', text: t.heating_off };
     if (n.windowOpen) return { icon: 'mdi:window-open-variant', cls: 'window', text: `${t.window_open} · ${fmtTemp(OFF_T, L)}` };
     if (n.manual) return { icon: 'mdi:hand-back-right-outline', cls: 'manual', text: `${t.manual} · ${fmtTemp(n.target, L)}${until}` };
@@ -1167,8 +1217,8 @@ class WeekheatCard extends Base {
   /** Status word and colour class above the setpoint (dial and slider). */
   _ctlStatus(n) {
     const t = this._t;
-    const status = !n.active ? t.paused : n.heatingOff ? t.heating_off : n.windowOpen ? t.window_open : n.manual ? t.manual : n.heating ? t.heating : t.scheduled;
-    const cls = !n.active ? 'dim' : n.heatingOff ? 'dim' : n.windowOpen ? 'window' : n.manual ? 'manual' : n.heating ? 'heat' : 'dim';
+    const status = !n.active ? t.paused : n.exercise ? t.exercise : n.heatingOff ? t.heating_off : n.windowOpen ? t.window_open : n.manual ? t.manual : n.heating ? t.heating : t.scheduled;
+    const cls = !n.active ? 'dim' : n.exercise ? 'window' : n.heatingOff ? 'dim' : n.windowOpen ? 'window' : n.manual ? 'manual' : n.heating ? 'heat' : 'dim';
     return { status, cls };
   }
 
@@ -1301,7 +1351,16 @@ class WeekheatCard extends Base {
       <div class="srow"><div class="shead" data-a="set-open" data-v="add"><span class="accent">+ ${esc(t.add_room)}</span></div>${add}</div>
       <div class="stitle">${esc(t.day_settings)}</div>
       <div class="srow"><div class="shead" data-a="set-open" data-v="days"><span>${esc(t.day_settings_sub)}</span><span class="grow"></span>
-        <ha-icon class="chev" icon="${so === 'days' ? 'mdi:chevron-up' : 'mdi:chevron-down'}"></ha-icon></div>${so === 'days' ? this._renderSettings() : ''}</div>`;
+        <ha-icon class="chev" icon="${so === 'days' ? 'mdi:chevron-up' : 'mdi:chevron-down'}"></ha-icon></div>${so === 'days' ? this._renderSettings() : ''}</div>
+      <div class="stitle">${esc(t.exercise)}</div>
+      <div class="srow"><div class="shead" data-a="set-open" data-v="exercise"><span>${esc(t.exercise_sub)}</span><span class="grow"></span>
+        <span class="dim small">${esc(this._exerciseLine())}</span>
+        <ha-icon class="chev" icon="${so === 'exercise' ? 'mdi:chevron-up' : 'mdi:chevron-down'}"></ha-icon></div>${so === 'exercise' ? this._renderExercise() : ''}</div>`;
+  }
+
+  _exerciseLine() {
+    const x = exerciseFromInput((this._allRooms || this._rooms || [])[0]?.cfg?.use_blueprint?.input);
+    return x.exercise_day === 'off' ? this._t.off : `${this._t.wd_short[x.exercise_day]} ${String(x.exercise_time).slice(0, 5)}`;
   }
 
   _renderRoomSettings(room, n) {

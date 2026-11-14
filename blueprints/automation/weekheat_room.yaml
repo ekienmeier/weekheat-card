@@ -13,6 +13,9 @@ blueprint:
     temperature began in between.
     Optional heating switch (an input_boolean): while it is off, the thermostats
     are held at 5 °C and windows are ignored; switched on, the plan applies again.
+    Optional valve exercise, once a week: all thermostats go to 30 °C and 5 °C, twice,
+    then back to the setpoints from before (or to the plan's temperature if a period with
+    a different temperature began in between). Other events wait until it is done.
     Pairs with the Weekheat card (custom:weekheat-card).
   domain: automation
   source_url: https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/automation/weekheat_room.yaml
@@ -85,6 +88,35 @@ blueprint:
         entity:
           filter:
             - domain: input_boolean
+    exercise_day:
+      name: Valve exercise day
+      description: Weekday of the weekly valve exercise, or off.
+      default: "off"
+      selector:
+        select:
+          options:
+            - {value: "off", label: "Off"}
+            - {value: mon, label: Monday}
+            - {value: tue, label: Tuesday}
+            - {value: wed, label: Wednesday}
+            - {value: thu, label: Thursday}
+            - {value: fri, label: Friday}
+            - {value: sat, label: Saturday}
+            - {value: sun, label: Sunday}
+    exercise_time:
+      name: Valve exercise time
+      default: "13:00:00"
+      selector:
+        time: {}
+    exercise_wait:
+      name: Valve exercise wait
+      description: How long the valves are held fully open and fully closed, each time.
+      default: 60
+      selector:
+        number:
+          min: 10
+          max: 600
+          unit_of_measurement: seconds
     state:
       name: State helper
       description: An input_text (max 255) where the automation keeps what it last applied.
@@ -133,6 +165,8 @@ variables:
   windows: !input windows
   window_delay: !input window_delay
   heating_switch: !input heating_switch
+  exercise_day: !input exercise_day
+  exercise_wait: !input exercise_wait
 
 triggers:
   - trigger: state
@@ -165,8 +199,114 @@ triggers:
     entity_id: !input heating_switch
     to: ["on", "off"]
     id: switch
+  - trigger: time
+    at: !input exercise_time
+    id: exercise
+  # Run now (the card's button): optional entity_id, a room automation or a list of them.
+  - trigger: event
+    event_type: weekheat_exercise
+    id: exercise_now
 
 actions:
+  # Valve exercise: open fully, close fully, twice; then the setpoints from before. Runs first, so the
+  # normal run below sees what it restored and writes a new period's temperature if one began meanwhile.
+  - if:
+      - condition: template
+        value_template: >-
+          {%- set want = (trigger.event.data.entity_id | default([])) if trigger.id == 'exercise_now' else [] -%}
+          {%- set want = [want] if want is string else want | list -%}
+          {{ (trigger.id == 'exercise' and exercise_day == ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'][now().weekday()])
+             or (trigger.id == 'exercise_now' and (not want or this.entity_id in want)) }}
+    then:
+      - variables:
+          ex_list: >-
+            {%- set ns = namespace(l=[]) -%}
+            {%- for th in ([thermostats] if thermostats is string else thermostats | list) -%}
+              {%- set t = state_attr(th, 'temperature') -%}
+              {%- if states(th) not in ['unavailable', 'unknown'] -%}
+                {%- set ns.l = ns.l + [[th, t | float if t is number else none, states(th)]] -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {{ ns.l }}
+          ex_th: "{{ ex_list | map(attribute=0) | list }}"
+          ex_state: >-
+            {%- set s = states(state_entity) -%}
+            {{ s | from_json if s.startswith('{') else {} }}
+      - condition: template
+        value_template: "{{ ex_th | length > 0 }}"
+      # Marks the room for the card while it runs.
+      - action: input_text.set_value
+        target:
+          entity_id: !input state
+        data:
+          value: "{{ dict(ex_state, _ex=1) | to_json }}"
+      - if:
+          - condition: template
+            value_template: "{{ ex_list | selectattr(2, 'eq', 'off') | list | length > 0 }}"
+        then:
+          - action: climate.set_hvac_mode
+            continue_on_error: true
+            target:
+              entity_id: "{{ ex_list | selectattr(2, 'eq', 'off') | map(attribute=0) | list }}"
+            data:
+              hvac_mode: heat
+      - repeat:
+          count: 2
+          sequence:
+            - action: climate.set_temperature
+              continue_on_error: true
+              target:
+                entity_id: "{{ ex_th }}"
+              data:
+                temperature: 30
+            - delay:
+                seconds: "{{ exercise_wait | int(60) }}"
+            - action: climate.set_temperature
+              continue_on_error: true
+              target:
+                entity_id: "{{ ex_th }}"
+              data:
+                temperature: 5
+            - delay:
+                seconds: "{{ exercise_wait | int(60) }}"
+      - repeat:
+          for_each: "{{ ex_list }}"
+          sequence:
+            - if:
+                - condition: template
+                  value_template: "{{ repeat.item[1] is number }}"
+              then:
+                - action: climate.set_temperature
+                  continue_on_error: true
+                  target:
+                    entity_id: "{{ repeat.item[0] }}"
+                  data:
+                    temperature: "{{ repeat.item[1] }}"
+            - if:
+                - condition: template
+                  value_template: "{{ repeat.item[2] == 'off' }}"
+              then:
+                - action: climate.set_hvac_mode
+                  continue_on_error: true
+                  target:
+                    entity_id: "{{ repeat.item[0] }}"
+                  data:
+                    hvac_mode: "off"
+      - wait_template: >-
+          {%- set ns = namespace(ok=true) -%}
+          {%- for it in ex_list if it[1] is number -%}
+            {%- if (state_attr(it[0], 'temperature') | float(-100) - it[1]) | abs >= 0.25 -%}{%- set ns.ok = false -%}{%- endif -%}
+          {%- endfor -%}
+          {{ ns.ok }}
+        timeout:
+          seconds: "{{ settle_time }}"
+        continue_on_timeout: true
+      - action: input_text.set_value
+        target:
+          entity_id: !input state
+        data:
+          value: "{{ ex_state | to_json }}"
+
   - action: "{{ day_script }}"
     response_variable: day_info
   - variables:

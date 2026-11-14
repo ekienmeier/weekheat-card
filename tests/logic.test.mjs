@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   toMin, fromMin, nowIn, addDays, blocksToPeriods, periodsToBlocks, checkPeriods, periodAt, slugify,
   planLabel, matchPlan, planForDay, parseException, exceptionTitle, reasonText, fmtTemp, STARTER,
-  roomFromInput, DIRECTORY_FIELDS,
+  roomFromInput, DIRECTORY_FIELDS, exerciseFromInput,
 } from '../weekheat-card.js';
 
 test('time', () => {
@@ -118,4 +118,9 @@ test('roomFromInput reads blueprint inputs with defaults', () => {
   assert.equal(roomFromInput({}, 'Alias').name, 'Alias');
   assert.equal(roomFromInput({}, 'A').heating_switch, null);
   for (const k of DIRECTORY_FIELDS.filter((k) => !['entity', 'id'].includes(k))) assert.ok(k in r, k);
+});
+
+test('exerciseFromInput fills in the defaults', () => {
+  assert.deepEqual(exerciseFromInput(), { exercise_day: 'off', exercise_time: '13:00:00', exercise_wait: 60 });
+  assert.deepEqual(exerciseFromInput({ exercise_day: 'sat', exercise_wait: 90 }), { exercise_day: 'sat', exercise_time: '13:00:00', exercise_wait: 90 });
 });
