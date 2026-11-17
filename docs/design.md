@@ -20,7 +20,8 @@ Assistant, modelled on [Temperate](https://github.com/xman2000/temperate-card):
 - Runs entirely inside HA (a script, automations, helpers). The card edits and shows; nothing depends
   on a dashboard being open.
 
-Not in scope for now: heat/cool, external room sensors, presence. Open windows: see *Windows and doors*.
+Not in scope for now: heat/cool, presence. Open windows: see *Windows and doors*; a room sensor: see
+*Room sensor*.
 
 ## Parts
 
@@ -198,7 +199,9 @@ wanted temperature and when:
 ```
 
 Enough for 3–4 thermostats per room. While a window is open it also holds `"_open"`: the setpoints to
-restore, as a list in thermostat order (a list rather than a map to stay within 255 characters).
+restore, as a list in thermostat order (a list rather than a map to stay within 255 characters). While
+the room sensor holds the valves closed, `"_open"` is there too, plus `"_rc": 1`; `"_rt"` is the time of
+the room sensor's last switch (minutes since the epoch).
 
 ### Windows and doors
 
@@ -224,6 +227,44 @@ overwritten when it closes.
 Tested 2026-11-13 on a copy of the blueprint with the bedroom thermostat and an `input_boolean` as the
 window: opening and closing, the delay, a manual value restored, a new period while open, a short
 opening ignored (16 checks).
+
+### Room sensor
+
+Added 2026-11-17 (0.9) after an Aqara W600 in the bathroom kept heating at 20 °C with its linked T1 at
+22.6 °C: the W600 shows the external sensor's value but controls its valve on the internal sensor (an
+open firmware bug, reported on the Aqara forum since October 2026). The thermostat's temperature
+compensation shifts only the internal sensor, by one fixed value, and its error depends on how hot the
+radiator is.
+
+Per room an optional temperature sensor (`room_sensor`), a margin (`room_margin`, default 0.5 °C) and a
+hold time (`room_hold`, default 10 min). The setpoint is still the thermostat's: the plan's value, or one
+set by hand. Two states:
+
+| State | Thermostats have | Switches when |
+|---|---|---|
+| normal | the setpoint | room ≥ highest setpoint + margin → closed: the setpoints are saved in `_open` with `_rc`, 5 °C is written |
+| closed | 5 °C | room ≤ highest saved setpoint → normal: the saved setpoints are written back |
+
+- No polling: the automation also runs on every change of the room sensor, and on a setpoint change
+  while closed (a setpoint set by hand on the card, the thermostat or the vendor app).
+- While closed, a period with a different temperature replaces the saved value (as with an open window),
+  and a setpoint set by hand (anything not 5 °C) becomes the saved value; the room is then checked
+  against it at once (raised above the room: released; still below: 5 °C again).
+- The hold time spaces out only switches the room temperature causes (battery, motor). A new period or a
+  setpoint set by hand is let through at once; a held-back switch is caught by the next sensor change or
+  the 15-minute tick.
+- Precedence: heating switch off, then open windows, then the room sensor. A window opening while closed
+  turns it into a window hold (the saved setpoints stay); when the windows close, the room sensor
+  decides at once whether the valves stay closed (room above the setpoint) or get it back.
+- The sensor unavailable or not a number: the saved setpoints are written back and the room runs on the
+  plan alone. There is no "too old" rule: an Aqara T1 reports only changes, so in a steady room hours
+  without a report are normal.
+- The card shows the room's setpoint (the saved one), not the 5 °C, with the status *Warm enough · valve
+  closed*, and the room sensor's value as the room temperature.
+
+Tested 2026-11-17 in the bathroom (W600, T1 at 22.8 °C): the 06:00 period (10 °C) closed at once (5 °C
+written, 10 °C saved); 20 °C set by hand while closed was saved and 5 °C written again within 5 s; 24 °C
+by hand released at once (24 °C kept); 10 °C by hand then closed at the 06:15 tick, after the hold time.
 
 ### Home Assistant down
 

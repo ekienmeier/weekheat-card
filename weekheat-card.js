@@ -2,20 +2,22 @@
 // Pairs with the Weekheat blueprints (weekheat_day script, weekheat_room automation).
 // The first part (exported) is plain logic without DOM, tested in tests/logic.test.mjs.
 
-export const VERSION = '0.8.0';
+export const VERSION = '0.9.0';
 export const WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const SCHEDULE_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 export const ROOM_BLUEPRINT = 'weekheat_room.yaml';
 /** Key of the room directory in Home Assistant's frontend system data, and the room fields stored there. */
 export const DIRECTORY_KEY = 'weekheat';
-export const DIRECTORY_FIELDS = ['entity', 'id', 'name', 'thermostats', 'plans', 'week', 'free_day', 'state', 'windows', 'window_delay', 'heating_switch'];
+export const DIRECTORY_FIELDS = ['entity', 'id', 'name', 'thermostats', 'plans', 'week', 'free_day', 'state', 'windows', 'window_delay', 'heating_switch',
+  'room_sensor', 'room_margin'];
 
 /** A room from the room automation's blueprint inputs. */
 export function roomFromInput(i, alias) {
   const list = (v) => (Array.isArray(v) ? v : v ? [v] : []);
   return { name: i.room_name || alias, thermostats: list(i.thermostats), plans: list(i.plans), week: i.week || {},
     free_day: i.free_day, state: i.state, windows: list(i.windows), window_delay: i.window_delay ?? 30,
-    heating_switch: list(i.heating_switch)[0] || null };
+    heating_switch: list(i.heating_switch)[0] || null, room_sensor: list(i.room_sensor)[0] || null,
+    room_margin: i.room_margin ?? 0.5 };
 }
 /** The weekly valve exercise, the same for all rooms (blueprint inputs of each room automation). */
 export const EXERCISE_DEFAULTS = { exercise_day: 'off', exercise_time: '13:00:00', exercise_wait: 60 };
@@ -237,6 +239,8 @@ export const I18N = {
     exercise_help: 'Alle Thermostate auf 30 °C, warten, auf 5 °C, warten, das Ganze zweimal; danach wieder der Wert von vorher (oder der Plan, falls inzwischen eine neue Periode begann). Dauert etwa viermal die Wartezeit. Pausierte Räume werden ausgelassen.',
     confirm_exercise: 'Ventilpflege jetzt in allen aktiven Räumen ausführen?',
     window_help: 'Ist einer davon so lange offen, werden die Thermostate auf 5 °C gestellt; sind alle wieder zu, gilt wieder der Wert von vorher (oder der Plan, falls inzwischen eine neue Periode begann).',
+    room_sensor: 'Raumsensor', room_margin: 'Spielraum (°C)', rc_closed: 'Warm genug · Ventil zu',
+    room_help: 'Ist der Raum um den Spielraum wärmer als die Solltemperatur, werden die Thermostate auf 5 °C gestellt; ist er wieder auf die Solltemperatur abgekühlt, bekommen sie sie zurück. Für Thermostate, die überschwingen oder einen verknüpften Sensor nicht beachten.',
   },
   en: {
     working_day: 'Working day', free_day: 'Free day', today: 'Today', tomorrow: 'Tomorrow',
@@ -276,6 +280,8 @@ export const I18N = {
     exercise_help: 'All thermostats to 30 °C, wait, to 5 °C, wait, twice; then the value from before again (or the plan, if a new period began in between). Takes about four times the wait. Paused rooms are left out.',
     confirm_exercise: 'Run the valve exercise now in all active rooms?',
     window_help: 'When one of them has been open this long, the thermostats are set to 5 °C; when all are closed again, the value from before applies again (or the plan, if a new period began in between).',
+    room_sensor: 'Room sensor', room_margin: 'Margin (°C)', rc_closed: 'Warm enough · valve closed',
+    room_help: 'When the room is the margin above the setpoint, the thermostats are set to 5 °C; once it has cooled down to the setpoint, they get it back. For thermostats that overshoot or ignore a linked sensor.',
   },
 };
 
@@ -501,7 +507,7 @@ class WeekheatCard extends Base {
     const h = this._hass;
     if (!h || !this._rooms) return '';
     const ids = new Set();
-    for (const r of this._rooms) { ids.add(r.entity); r.thermostats.forEach((t) => ids.add(t)); r.plans.forEach((p) => ids.add(p)); (r.windows || []).forEach((w) => ids.add(w)); if (r.state) ids.add(r.state); if (r.heating_switch) ids.add(r.heating_switch); }
+    for (const r of this._rooms) { ids.add(r.entity); r.thermostats.forEach((t) => ids.add(t)); r.plans.forEach((p) => ids.add(p)); (r.windows || []).forEach((w) => ids.add(w)); if (r.state) ids.add(r.state); if (r.heating_switch) ids.add(r.heating_switch); if (r.room_sensor) ids.add(r.room_sensor); }
     return [...ids].map((e) => h.states[e]?.last_updated).join('|');
   }
 
@@ -534,20 +540,30 @@ class WeekheatCard extends Base {
     const th = room.thermostats.map((e) => h.states[e]).filter(Boolean);
     const avail = th.filter((s) => !['unavailable', 'unknown'].includes(s.state));
     const cur = avail.map((s) => s.attributes.current_temperature).filter((x) => typeof x === 'number');
-    const target = avail.map((s) => s.attributes.temperature).find((x) => typeof x === 'number');
+    let target = avail.map((s) => s.attributes.temperature).find((x) => typeof x === 'number');
     let st = {};
     try { st = JSON.parse(h.states[room.state]?.state || '{}') || {}; } catch (e) { /* not JSON */ }
     const saved = st._open || null;
     const exercise = !!st._ex && h.states[room.entity]?.state === 'on';
     const openWin = (room.windows || []).filter((w) => h.states[w]?.state === 'on');
     const heatingOff = !!room.heating_switch && h.states[room.heating_switch]?.state === 'off';
-    const windowOpen = !heatingOff && !!saved && h.states[room.entity]?.state === 'on';
-    const manual = !exercise && !heatingOff && !windowOpen && wanted != null && avail.some((s) => s.state === 'off' || Math.abs((s.attributes.temperature ?? -99) - wanted) >= 0.25);
-    return { exercise, heatingOff, windowOpen, openWin, plan, periods, at, wanted, current: cur.length ? cur.reduce((a, b) => a + b, 0) / cur.length : null, target,
+    const held = !heatingOff && !!saved && h.states[room.entity]?.state === 'on';
+    // Held at 5 °C by the room sensor: the room's setpoint is the one to be given back.
+    const roomClosed = held && !!st._rc;
+    const windowOpen = held && !st._rc;
+    const keep = roomClosed ? saved.filter((x) => typeof x === 'number') : [];
+    if (keep.length) target = Math.max(...keep);
+    const manual = !exercise && !heatingOff && !windowOpen && wanted != null && (roomClosed
+      ? target != null && Math.abs(target - wanted) >= 0.25
+      : avail.some((s) => s.state === 'off' || Math.abs((s.attributes.temperature ?? -99) - wanted) >= 0.25));
+    const rs = room.room_sensor ? h.states[room.room_sensor] : null;
+    const roomT = rs && rs.state !== '' && !isNaN(+rs.state) ? +rs.state : null;
+    return { exercise, heatingOff, windowOpen, roomClosed, openWin, plan, periods, at, wanted, target,
+      current: roomT ?? (cur.length ? cur.reduce((a, b) => a + b, 0) / cur.length : null),
       unavailable: th.length - avail.length, off: avail.some((s) => s.state === 'off'), manual,
       active: h.states[room.entity]?.state === 'on', step: avail[0]?.attributes.target_temp_step || 0.5,
       // hvac_action alone is not enough: over HomeKit the Aqara valves report "heating" whenever the mode is heat.
-      heating: avail.some((s) => s.attributes.hvac_action === 'heating'
+      heating: !roomClosed && avail.some((s) => s.attributes.hvac_action === 'heating'
         && !(typeof s.attributes.current_temperature === 'number' && typeof s.attributes.temperature === 'number'
           && s.attributes.current_temperature >= s.attributes.temperature - 0.2)) };
   }
@@ -825,7 +841,8 @@ class WeekheatCard extends Base {
       ui.draft = { room: room.id, plans: Object.fromEntries(room.plans.filter((p) => this._plans[p]).map((p) => [p,
         { name: this._planName(room, p), origName: this._planName(room, p), periods: this._plans[p].periods.map((x) => ({ ...x })) }])),
       week: { ...room.week }, free_day: room.free_day, name: room.name, thermostats: [...room.thermostats],
-      windows: [...(room.windows || [])], window_delay: room.window_delay ?? 30 };
+      windows: [...(room.windows || [])], window_delay: room.window_delay ?? 30,
+      room_sensor: room.room_sensor || '', room_margin: room.room_margin ?? 0.5 };
     }
     return ui.draft;
   }
@@ -919,7 +936,9 @@ class WeekheatCard extends Base {
         const d = this._draftFor(room);
         if (!d.name.trim() || !d.thermostats.length) return;
         const delay = Math.max(0, Math.min(900, Math.round(+d.window_delay || 0)));
-        this._run(async () => { await this._saveRoomConfig(room, { room_name: d.name.trim(), thermostats: d.thermostats, windows: d.windows, window_delay: delay }); ui.draft = null; await this._poke([room]); });
+        const margin = Math.max(0.1, Math.min(3, Math.round((+String(d.room_margin).replace(',', '.') || 0.5) * 10) / 10));
+        this._run(async () => { await this._saveRoomConfig(room, { room_name: d.name.trim(), thermostats: d.thermostats, windows: d.windows, window_delay: delay,
+          room_sensor: d.room_sensor || [], room_margin: margin }); ui.draft = null; await this._poke([room]); });
         return;
       }
       case 'day': ui.dayEdit = ui.dayEdit?.date === el.dataset.v ? null : this._dayDraft(el.dataset.v); break;
@@ -988,6 +1007,8 @@ class WeekheatCard extends Base {
       case 'r-name': this._draftFor(room).name = v; break;
       case 'r-win': { const d = this._draftFor(room); d.windows = v ? [...d.windows, el.dataset.v] : d.windows.filter((w) => w !== el.dataset.v); break; }
       case 'r-delay': this._draftFor(room).window_delay = v; return;
+      case 'r-sensor': this._draftFor(room).room_sensor = v; break;
+      case 'r-margin': this._draftFor(room).room_margin = v; return;
       case 'r-th': { const d = this._draftFor(room); d.thermostats = v ? [...d.thermostats, el.dataset.v] : d.thermostats.filter((t) => t !== el.dataset.v); break; }
       case 'ap-name': ui.addPlan.name = v; return;
       case 'ap-template': ui.addPlan.template = v; return;
@@ -1117,6 +1138,7 @@ class WeekheatCard extends Base {
     if (n.exercise) return { icon: 'mdi:pipe-valve', cls: 'window', text: t.exercise };
     if (n.heatingOff) return { icon: 'mdi:power', cls: 'paused', text: t.heating_off };
     if (n.windowOpen) return { icon: 'mdi:window-open-variant', cls: 'window', text: `${t.window_open} · ${fmtTemp(OFF_T, L)}` };
+    if (n.roomClosed) return { icon: 'mdi:valve-closed', cls: n.manual ? 'manual' : 'ok', text: `${t.rc_closed} · ${fmtTemp(n.target, L)}${until}` };
     if (n.manual) return { icon: 'mdi:hand-back-right-outline', cls: 'manual', text: `${t.manual} · ${fmtTemp(n.target, L)}${until}` };
     if (n.heating) return { icon: 'mdi:fire', cls: 'heat', text: `${t.heating} · ${t.to} ${fmtTemp(n.target, L)}${until}` };
     return { icon: 'mdi:check', cls: 'ok', text: n.at ? `${fmtTemp(n.at.period, L)}${until || ` ${t.until} ${t.tomorrow_l}`}` : '–' };
@@ -1217,7 +1239,7 @@ class WeekheatCard extends Base {
   /** Status word and colour class above the setpoint (dial and slider). */
   _ctlStatus(n) {
     const t = this._t;
-    const status = !n.active ? t.paused : n.exercise ? t.exercise : n.heatingOff ? t.heating_off : n.windowOpen ? t.window_open : n.manual ? t.manual : n.heating ? t.heating : t.scheduled;
+    const status = !n.active ? t.paused : n.exercise ? t.exercise : n.heatingOff ? t.heating_off : n.windowOpen ? t.window_open : n.roomClosed ? t.rc_closed : n.manual ? t.manual : n.heating ? t.heating : t.scheduled;
     const cls = !n.active ? 'dim' : n.exercise ? 'window' : n.heatingOff ? 'dim' : n.windowOpen ? 'window' : n.manual ? 'manual' : n.heating ? 'heat' : 'dim';
     return { status, cls };
   }
@@ -1370,6 +1392,9 @@ class WeekheatCard extends Base {
     const contacts = Object.values(this._hass.states).filter((s) => d.windows.includes(s.entity_id)
       || (s.entity_id.startsWith('binary_sensor.') && WINDOW_CLASSES.includes(s.attributes.device_class)))
       .sort((a, b) => String(a.attributes.friendly_name).localeCompare(String(b.attributes.friendly_name)));
+    const temps = Object.values(this._hass.states).filter((s) => s.entity_id === d.room_sensor
+      || (s.entity_id.startsWith('sensor.') && s.attributes.device_class === 'temperature'))
+      .sort((a, b) => String(a.attributes.friendly_name).localeCompare(String(b.attributes.friendly_name)));
     return `<div class="panel"><label class="field">${esc(t.name)} <input data-c="r-name" value="${esc(d.name)}"></label>
       <div class="field">${esc(t.thermostats)}</div>
       ${climates.map((s) => `<label class="check"><input type="checkbox" data-c="r-th" data-v="${s.entity_id}" ${d.thermostats.includes(s.entity_id) ? 'checked' : ''}> ${esc(s.attributes.friendly_name || s.entity_id)}</label>`).join('')}
@@ -1377,6 +1402,9 @@ class WeekheatCard extends Base {
       ${contacts.map((s) => `<label class="check"><input type="checkbox" data-c="r-win" data-v="${s.entity_id}" ${d.windows.includes(s.entity_id) ? 'checked' : ''}> ${esc(s.attributes.friendly_name || s.entity_id)}</label>`).join('')}
       <label class="field">${esc(t.window_delay)} <input type="number" inputmode="numeric" min="0" max="900" step="5" data-c="r-delay" value="${esc(d.window_delay)}"></label>
       <div class="dim small">${esc(t.window_help)}</div>
+      <label class="field">${esc(t.room_sensor)} <select data-c="r-sensor"><option value="">${esc(t.none)}</option>${temps.map((s) => `<option value="${s.entity_id}" ${s.entity_id === d.room_sensor ? 'selected' : ''}>${esc(s.attributes.friendly_name || s.entity_id)}</option>`).join('')}</select></label>
+      ${d.room_sensor ? `<label class="field">${esc(t.room_margin)} <input type="number" inputmode="decimal" min="0.1" max="3" step="0.1" data-c="r-margin" value="${esc(d.room_margin)}"></label>` : ''}
+      <div class="dim small">${esc(t.room_help)}</div>
       <div class="actions"><button class="btn flat small" data-a="active">${esc(n.active ? t.pause_room : t.activate_room)}</button>
         <span class="grow"></span><button class="btn small" data-a="save-room">${esc(t.save)}</button></div>
       <div class="dim small">${esc(t.pause_help)}</div></div>`;

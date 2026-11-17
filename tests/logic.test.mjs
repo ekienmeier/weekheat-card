@@ -114,9 +114,12 @@ test('dial: angle and pointer value', async () => {
 test('roomFromInput reads blueprint inputs with defaults', () => {
   const r = roomFromInput({ room_name: 'Bad', thermostats: 'climate.a', plans: ['schedule.x'], heating_switch: ['input_boolean.h'] }, 'Weekheat Bad');
   assert.deepEqual(r, { name: 'Bad', thermostats: ['climate.a'], plans: ['schedule.x'], week: {}, free_day: undefined, state: undefined,
-    windows: [], window_delay: 30, heating_switch: 'input_boolean.h' });
+    windows: [], window_delay: 30, heating_switch: 'input_boolean.h', room_sensor: null, room_margin: 0.5 });
   assert.equal(roomFromInput({}, 'Alias').name, 'Alias');
   assert.equal(roomFromInput({}, 'A').heating_switch, null);
+  assert.equal(roomFromInput({}, 'A').room_sensor, null);
+  assert.equal(roomFromInput({}, 'A').room_margin, 0.5);
+  assert.equal(roomFromInput({ room_sensor: 'sensor.t1', room_margin: 0.8 }, 'A').room_sensor, 'sensor.t1');
   for (const k of DIRECTORY_FIELDS.filter((k) => !['entity', 'id'].includes(k))) assert.ok(k in r, k);
 });
 

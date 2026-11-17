@@ -16,6 +16,9 @@ blueprint:
     Optional valve exercise, once a week: all thermostats go to 30 °C and 5 °C, twice,
     then back to the setpoints from before (or to the plan's temperature if a period with
     a different temperature began in between). Other events wait until it is done.
+    Optional room sensor: Weekheat then holds the valves at 5 °C while the room is at
+    least the margin above the setpoint, and gives the setpoint back once the room has
+    cooled down to it (for thermostats that overshoot, or ignore a linked sensor).
     Pairs with the Weekheat card (custom:weekheat-card).
   domain: automation
   source_url: https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/automation/weekheat_room.yaml
@@ -117,6 +120,37 @@ blueprint:
           min: 10
           max: 600
           unit_of_measurement: seconds
+    room_sensor:
+      name: Room sensor
+      description: >-
+        Optional temperature sensor in the room. While the room is at least the margin above the
+        setpoint, the thermostats are held at 5 °C; once it is back down to the setpoint, they get
+        the setpoint again.
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: temperature
+    room_margin:
+      name: Room margin
+      description: How far above the setpoint the room must be before the valves are closed.
+      default: 0.5
+      selector:
+        number:
+          min: 0.1
+          max: 3
+          step: 0.1
+          unit_of_measurement: °C
+    room_hold:
+      name: Room hold
+      description: Minimum time between two switches of the room sensor control (saves batteries).
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 60
+          unit_of_measurement: minutes
     state:
       name: State helper
       description: An input_text (max 255) where the automation keeps what it last applied.
@@ -150,7 +184,7 @@ blueprint:
             - {value: de, label: Deutsch}
 
 mode: queued
-max: 10
+max: 30
 
 variables:
   room_name: !input room_name
@@ -167,6 +201,9 @@ variables:
   heating_switch: !input heating_switch
   exercise_day: !input exercise_day
   exercise_wait: !input exercise_wait
+  room_sensor: !input room_sensor
+  room_margin: !input room_margin
+  room_hold: !input room_hold
 
 triggers:
   - trigger: state
@@ -206,8 +243,21 @@ triggers:
   - trigger: event
     event_type: weekheat_exercise
     id: exercise_now
+  - trigger: state
+    entity_id: !input room_sensor
+    to: ~
+    id: room
+  # A setpoint changed (by hand or by Weekheat): only matters while the room sensor holds the valves closed.
+  - trigger: state
+    entity_id: !input thermostats
+    attribute: temperature
+    id: setpoint
 
 actions:
+  - condition: template
+    value_template: >-
+      {{ trigger.id != 'setpoint' or ('"_rc"' in states(state_entity)
+         and (trigger.to_state.attributes.temperature | float(0)) > 5.05) }}
   # Valve exercise: open fully, close fully, twice; then the setpoints from before. Runs first, so the
   # normal run below sees what it restored and writes a new period's temperature if one began meanwhile.
   - if:
@@ -345,13 +395,22 @@ actions:
         {%- endfor -%}
         {{ ns.o }}
       saved: "{{ applied.get('_open') }}"
+      # Room sensor: its value, or none (no sensor, or no number right now).
+      room_t: >-
+        {%- set s = room_sensor[0] if room_sensor is list and room_sensor else room_sensor -%}
+        {{ states(s) | float if s is string and s != '' and is_number(states(s)) else none }}
+      rc_held: "{{ saved is list and applied.get('_rc') is not none }}"
+      now_m: "{{ (now().timestamp() // 60) | int }}"
+      rc_free: >-
+        {{ applied.get('_rt') is not number or now_m - applied.get('_rt') >= room_hold | float(10) }}
       switch_off: >-
         {%- set sw = heating_switch[0] if heating_switch is list and heating_switch else heating_switch -%}
         {{ sw is string and sw != '' and is_state(sw, 'off') }}
       mode: >-
         {%- if switch_off -%}off
         {%- elif open_now -%}{{ 'hold' if saved is list else 'open' }}
-        {%- else -%}{{ 'restore' if saved is list else 'plan' }}{%- endif -%}
+        {%- elif saved is list -%}{{ 'rc' if room_t is number else 'restore' }}
+        {%- else -%}plan{%- endif -%}
 
   # Window opened: remember the setpoints (in thermostat order) and turn down. When the heating was
   # just switched on with a window open, remember the plan's temperature instead of the 5 °C.
@@ -396,7 +455,7 @@ actions:
               {%- else -%}{%- set ns.s = ns.s + [old] -%}{%- endif -%}
             {%- endfor -%}
             {{ {'a': ns.a, 's': ns.s} }}
-          applied: "{{ dict(applied, _open=news.s, **news.a) }}"
+          applied: "{{ dict(dict(applied.items() | rejectattr(0, 'eq', '_rc') | list), _open=news.s, **news.a) }}"
           # A thermostat that was unavailable when the window opened: turn it down now that it is back.
           targets: >-
             {%- set ns = namespace(l=[]) -%}
@@ -421,7 +480,60 @@ actions:
               {%- if v is number -%}{%- set ns.l = ns.l + [[th, v]] -%}{%- endif -%}
             {%- endfor -%}
             {{ ns.l }}
-          applied: "{{ dict(applied.items() | rejectattr(0, 'eq', '_open') | list) }}"
+          applied: "{{ dict(applied.items() | rejectattr(0, 'in', ['_open', '_rc']) | list) }}"
+
+  # Room sensor holds the valves closed (or a window was just closed): keep them at 5 °C until the room
+  # is back down to the setpoint. A new period's temperature or a setpoint set by hand becomes the value
+  # given back later.
+  - if:
+      - condition: template
+        value_template: "{{ mode == 'rc' }}"
+    then:
+      - variables:
+          news: >-
+            {%- set ns = namespace(a={}, s=[], m=false) -%}
+            {%- for th in th_list -%}
+              {%- set last = (applied.get(th) or [none])[0] -%}
+              {%- set old = saved[loop.index0] if loop.index0 < saved | length else none -%}
+              {%- set cur = state_attr(th, 'temperature') -%}
+              {%- if wanted is number and (last is not number or (last - wanted) | abs >= 0.05) -%}
+                {%- set ns.a = dict(ns.a, **{th: [wanted, stamp]}) -%}{%- set ns.s = ns.s + [wanted] -%}
+              {%- elif rc_held and states(th) not in ['off', 'unavailable', 'unknown'] and cur is number and (cur - 5) | abs >= 0.25 -%}
+                {%- set ns.s = ns.s + [cur | float] -%}{%- set ns.m = true -%}
+              {%- else -%}{%- set ns.s = ns.s + [old] -%}{%- endif -%}
+            {%- endfor -%}
+            {{ {'a': ns.a, 's': ns.s, 'm': ns.m} }}
+          rc_max: "{{ news.s | select('number') | max if news.s | select('number') | list else none }}"
+          # The hold time spaces out only the switches the room temperature causes; a new period or a
+          # setpoint set by hand is let through at once.
+          release: >-
+            {{ room_t is not number or rc_max is not number
+               or (room_t <= rc_max and (not rc_held or rc_free or news.m or news.a | length > 0)) }}
+          base: "{{ dict(applied.items() | rejectattr(0, 'in', ['_open', '_rc']) | list) }}"
+      - if:
+          - condition: template
+            value_template: "{{ release }}"
+        then:
+          - variables:
+              applied: "{{ dict(base, _rt=now_m, **news.a) if rc_held else dict(base, **news.a) }}"
+              targets: >-
+                {%- set ns = namespace(l=[]) -%}
+                {%- for th in th_list -%}
+                  {%- set v = news.s[loop.index0] -%}
+                  {%- set cur = state_attr(th, 'temperature') -%}
+                  {%- if v is number and not (cur is number and (cur - v) | abs < 0.25) -%}{%- set ns.l = ns.l + [[th, v]] -%}{%- endif -%}
+                {%- endfor -%}
+                {{ ns.l }}
+        else:
+          - variables:
+              applied: "{{ dict(dict(base, **news.a), _open=news.s, _rc=1) }}"
+              targets: >-
+                {%- set ns = namespace(l=[]) -%}
+                {%- for th in th_list -%}
+                  {%- set cur = state_attr(th, 'temperature') -%}
+                  {%- if states(th) not in ['off', 'unavailable', 'unknown'] and cur is number and cur > 5.05 -%}{%- set ns.l = ns.l + [[th, 5]] -%}{%- endif -%}
+                {%- endfor -%}
+                {{ ns.l }}
 
   # Heating switched off: forget an open window, hold 5 °C (written once, like a plan value).
   - if:
@@ -429,7 +541,7 @@ actions:
         value_template: "{{ mode == 'off' }}"
     then:
       - variables:
-          applied: "{{ dict(applied.items() | rejectattr(0, 'eq', '_open') | list) }}"
+          applied: "{{ dict(applied.items() | rejectattr(0, 'in', ['_open', '_rc']) | list) }}"
           wanted: 5
 
   # Normal run (or off): write the plan's temperature where it changed.
@@ -437,17 +549,50 @@ actions:
       - condition: template
         value_template: "{{ mode in ['plan', 'off'] }}"
     then:
-      # Nothing scheduled right now (a gap between blocks, or the plan is missing): leave everything alone.
-      - condition: template
-        value_template: "{{ wanted is number }}"
+      # Nothing scheduled right now (a gap between blocks, or the plan is missing): leave the setpoints alone.
       - variables:
           targets: >-
             {%- set ns = namespace(l=[]) -%}
-            {%- for th in th_list -%}
+            {%- for th in th_list if wanted is number -%}
               {%- set last = (applied.get(th) or [none])[0] -%}
               {%- if last is not number or (last - wanted) | abs >= 0.05 -%}{%- set ns.l = ns.l + [[th, wanted]] -%}{%- endif -%}
             {%- endfor -%}
             {{ ns.l }}
+
+  # Room sensor: the room is the margin above the setpoint (what the thermostats have after this run):
+  # remember the setpoints and close the valves.
+  - if:
+      - condition: template
+        value_template: "{{ mode == 'plan' and room_t is number and rc_free }}"
+    then:
+      - variables:
+          eff: >-
+            {%- set ns = namespace(l=[]) -%}
+            {%- set tmap = dict(targets) -%}
+            {%- for th in th_list -%}
+              {%- set cur = state_attr(th, 'temperature') -%}
+              {%- if states(th) in ['off', 'unavailable', 'unknown'] -%}{%- set ns.l = ns.l + [none] -%}
+              {%- elif th in tmap -%}{%- set ns.l = ns.l + [tmap[th] | float] -%}
+              {%- else -%}{%- set ns.l = ns.l + [cur | float if cur is number else none] -%}{%- endif -%}
+            {%- endfor -%}
+            {{ ns.l }}
+          eff_max: "{{ eff | select('number') | max if eff | select('number') | list else none }}"
+      - if:
+          - condition: template
+            value_template: "{{ eff_max is number and eff_max > 5.05 and room_t >= eff_max + room_margin | float(0.5) - 0.001 }}"
+        then:
+          - variables:
+              mode: close
+              applied: >-
+                {%- set ns = namespace(a=applied) -%}
+                {%- for it in targets -%}{%- set ns.a = dict(ns.a, **{it[0]: [it[1] | float, stamp]}) -%}{%- endfor -%}
+                {{ dict(ns.a, _open=eff, _rc=1, _rt=now_m) }}
+              targets: >-
+                {%- set ns = namespace(l=[]) -%}
+                {%- for th in th_list -%}
+                  {%- if eff[loop.index0] is number and eff[loop.index0] > 5.05 -%}{%- set ns.l = ns.l + [[th, 5]] -%}{%- endif -%}
+                {%- endfor -%}
+                {{ ns.l }}
 
   # Window states are saved before writing, so the card shows them at once.
   - if:

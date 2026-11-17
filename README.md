@@ -19,6 +19,9 @@ single setpoint.
   on a horizontal **slider** (drag or tap the bar, arrow keys), with the room temperature marked on both.
 - **Windows and doors**: while a room's window or door sensor is open (for a delay, 30 s by default), its
   thermostats are set to 5 °C; when all are closed, the setpoints from before come back.
+- **Room sensor** (optional): while the room is a margin (0.5 °C by default) above the setpoint, its
+  thermostats are held at 5 °C; once it has cooled down to the setpoint, they get it back. For valves that
+  overshoot or ignore a linked sensor (seen with the Aqara W600).
 - **Valve exercise**: once a week (day, time and wait set on the card), all thermostats go to 30 °C and
   5 °C, twice, then back to what they had before. Other events wait until it is done.
 - Everything runs inside Home Assistant (a script, one automation per room, schedule helpers). The
@@ -27,7 +30,7 @@ single setpoint.
 Based on the idea and structure of [Temperate](https://github.com/xman2000/temperate-card) by Stephen
 (MIT), which does this for heat/cool thermostats with one day plan. Design: [docs/design.md](docs/design.md).
 
-Status: early (0.8). Tested with Aqara E1/W600 thermostats through HomeKit Controller on HA 2026.11.
+Status: early (0.9). Tested with Aqara E1/W600 thermostats through HomeKit Controller on HA 2026.11.
 
 ## Parts
 
