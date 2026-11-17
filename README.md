@@ -116,7 +116,8 @@ also be added in Home Assistant's calendar view.
   when a blueprint must be re-imported.
 
 A release is: `VERSION` in `weekheat-card.js` and the status line above, a commit titled
-`… (x.y.z)`, a tag `vx.y.z` and a GitHub release with short notes (HACS offers it as the update).
+`… (x.y.z)`, a tag `vx.y.z` and a GitHub release with short notes (HACS offers it as the update). The
+release's name is the tag itself (`vx.y.z`): HACS shows both as the heading of its update notes when they differ.
 
 ## License
 
