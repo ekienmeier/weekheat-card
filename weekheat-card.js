@@ -2,7 +2,7 @@
 // Pairs with the Weekheat blueprints (weekheat_day script, weekheat_room automation).
 // The first part (exported) is plain logic without DOM, tested in tests/logic.test.mjs.
 
-export const VERSION = '0.9.0';
+export const VERSION = '0.10.0';
 export const WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const SCHEDULE_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 export const ROOM_BLUEPRINT = 'weekheat_room.yaml';
@@ -29,6 +29,35 @@ export const MIN_T = 5;
 export const MAX_T = 30;
 export const OFF_T = 5;
 export const WINDOW_CLASSES = ['window', 'door', 'opening', 'garage_door'];
+
+/** "1 Regel", "2 Regeln": `n` with the singular or plural of `[one, many]`. */
+export function count(n, [one, many]) {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+// ---------- entity picker ----------
+
+/** Does entity state `s` fit a picker of `kind` (th: thermostats, win: windows and doors, rs: room sensor)? */
+export function pickKind(s, kind) {
+  const id = s.entity_id;
+  if (kind === 'th') return id.startsWith('climate.');
+  if (kind === 'win') return id.startsWith('binary_sensor.') && WINDOW_CLASSES.includes(s.attributes?.device_class);
+  if (kind === 'rs') return id.startsWith('sensor.') && s.attributes?.device_class === 'temperature';
+  return false;
+}
+
+/** Picker candidates: entities of `kind` not in `exclude` whose name, entity id or area contain every word
+ * of `q`, sorted by name and split into the room's area (`here`) and the rest (`other`). */
+export function pickCandidates(states, { kind, q = '', exclude = [], areaOf = () => '', roomArea = '' }) {
+  const words = String(q).toLowerCase().split(/\s+/).filter(Boolean);
+  const name = (s) => String(s.attributes?.friendly_name || s.entity_id);
+  const list = states.filter((s) => pickKind(s, kind) && !exclude.includes(s.entity_id)).filter((s) => {
+    const hay = `${name(s)} ${s.entity_id} ${areaOf(s.entity_id) || ''}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  }).sort((a, b) => name(a).localeCompare(name(b)));
+  const here = roomArea ? list.filter((s) => areaOf(s.entity_id) === roomArea) : [];
+  return { here, other: list.filter((s) => !here.includes(s)) };
+}
 
 // ---------- time ----------
 
@@ -230,7 +259,7 @@ export const I18N = {
     setpoint: 'Solltemperatur', all_rooms: 'Alle Räume', v_control: 'Regler', v_plan: 'Plan', v_week: 'Woche', heating_l_cap: 'Heizung', to: 'auf',
     rename: 'Umbenennen', unsaved: 'Nicht gespeichert', used_on: 'Verwendet', not_used: 'Derzeit in keiner Woche verwendet',
     free_days: 'Freie Tage', week_help: 'Freie Tage sind Wochenenden, Feiertage und Tage aus Kalender oder Ausnahmen.',
-    rooms: 'Räume', thermostats_short: 'Thermostat(e)', windows_short: 'Kontakt(e)', day_settings: 'Werktage und freie Tage',
+    rooms: 'Räume', thermostats_short: ['Thermostat', 'Thermostate'], windows_short: ['Kontakt', 'Kontakte'], day_settings: 'Werktage und freie Tage',
     day_settings_sub: 'Kalender, Stichwörter, Workday', pause_room: 'Raum pausieren', activate_room: 'Raum aktivieren',
     pause_help: 'Pausiert: Weekheat schreibt nichts, die Thermostate behalten ihren Wert. Zum Abschalten den Heizungsschalter des Raums verwenden.', heating_off: 'Aus', heating_l: 'Heizung', turn_on: 'Heizung einschalten', turn_off: 'Heizung ausschalten', window_open: 'Fenster offen', windows: 'Fenster- und Türkontakte',
     window_delay: 'Verzögerung (Sekunden)',
@@ -239,7 +268,12 @@ export const I18N = {
     exercise_help: 'Alle Thermostate auf 30 °C, warten, auf 5 °C, warten, das Ganze zweimal; danach wieder der Wert von vorher (oder der Plan, falls inzwischen eine neue Periode begann). Dauert etwa viermal die Wartezeit. Pausierte Räume werden ausgelassen.',
     confirm_exercise: 'Ventilpflege jetzt in allen aktiven Räumen ausführen?',
     window_help: 'Ist einer davon so lange offen, werden die Thermostate auf 5 °C gestellt; sind alle wieder zu, gilt wieder der Wert von vorher (oder der Plan, falls inzwischen eine neue Periode begann).',
-    room_sensor: 'Raumsensor', room_margin: 'Spielraum (°C)', rc_closed: 'Warm genug · Ventil zu',
+    room_sensor: 'Raumsensor', room_margin: 'Spielraum', rc_closed: 'Warm genug · Ventil zu',
+    v_setup: 'Einrichtung', search: 'Suchen', add: 'Hinzufügen', remove: 'Entfernen', in_area: 'Im Bereich',
+    other_areas: 'Andere Bereiche', no_match: 'Nichts gefunden', more_matches: 'weitere – Suche verfeinern',
+    windows_doors: 'Fenster und Türen', delay: 'Verzögerung (Sekunden)', margin_less: 'Spielraum kleiner', margin_more: 'Spielraum größer',
+    day_wd: 'Workday und Feiertage', calendars_n: ['Kalender', 'Kalender'], rules_n: ['Regel', 'Regeln'], room_sensor_short: 'Raumsensor',
+    room_closed_help: 'Ist der Raum um den Spielraum wärmer als die Solltemperatur, geht das Ventil zu (5 °C). Ist er wieder auf die Solltemperatur abgekühlt, heizt es wieder.',
     room_help: 'Ist der Raum um den Spielraum wärmer als die Solltemperatur, werden die Thermostate auf 5 °C gestellt; ist er wieder auf die Solltemperatur abgekühlt, bekommen sie sie zurück. Für Thermostate, die überschwingen oder einen verknüpften Sensor nicht beachten.',
   },
   en: {
@@ -271,7 +305,7 @@ export const I18N = {
     setpoint: 'Setpoint', all_rooms: 'All rooms', v_control: 'Control', v_plan: 'Plan', v_week: 'Week', heating_l_cap: 'Heating', to: 'to',
     rename: 'Rename', unsaved: 'Not saved', used_on: 'Used', not_used: 'Not used in the week at the moment',
     free_days: 'Free days', week_help: 'Free days are weekends, public holidays and days from calendars or exceptions.',
-    rooms: 'Rooms', thermostats_short: 'thermostat(s)', windows_short: 'sensor(s)', day_settings: 'Working days and free days',
+    rooms: 'Rooms', thermostats_short: ['thermostat', 'thermostats'], windows_short: ['contact', 'contacts'], day_settings: 'Working days and free days',
     day_settings_sub: 'Calendars, keywords, Workday', pause_room: 'Pause room', activate_room: 'Activate room',
     pause_help: 'Paused: Weekheat writes nothing and the thermostats keep their value. To turn a room off, use its heating switch.', heating_off: 'Off', heating_l: 'heating', turn_on: 'Turn heating on', turn_off: 'Turn heating off', window_open: 'Window open', windows: 'Window and door sensors',
     window_delay: 'Delay (seconds)',
@@ -280,7 +314,12 @@ export const I18N = {
     exercise_help: 'All thermostats to 30 °C, wait, to 5 °C, wait, twice; then the value from before again (or the plan, if a new period began in between). Takes about four times the wait. Paused rooms are left out.',
     confirm_exercise: 'Run the valve exercise now in all active rooms?',
     window_help: 'When one of them has been open this long, the thermostats are set to 5 °C; when all are closed again, the value from before applies again (or the plan, if a new period began in between).',
-    room_sensor: 'Room sensor', room_margin: 'Margin (°C)', rc_closed: 'Warm enough · valve closed',
+    room_sensor: 'Room sensor', room_margin: 'Margin', rc_closed: 'Warm enough · valve closed',
+    v_setup: 'Setup', search: 'Search', add: 'Add', remove: 'Remove', in_area: 'In the area',
+    other_areas: 'Other areas', no_match: 'No match', more_matches: 'more – refine the search',
+    windows_doors: 'Windows and doors', delay: 'Delay (seconds)', margin_less: 'Smaller margin', margin_more: 'Larger margin',
+    day_wd: 'Workday and holidays', calendars_n: ['calendar', 'calendars'], rules_n: ['rule', 'rules'], room_sensor_short: 'room sensor',
+    room_closed_help: 'When the room is the margin above the setpoint, the valve closes (5 °C). Once it has cooled down to the setpoint, it heats again.',
     room_help: 'When the room is the margin above the setpoint, the thermostats are set to 5 °C; once it has cooled down to the setpoint, they get it back. For thermostats that overshoot or ignore a linked sensor.',
   },
 };
@@ -747,7 +786,15 @@ class WeekheatCard extends Base {
     });
     root.addEventListener('change', (ev) => {
       const el = ev.target.closest('[data-c]');
-      if (el) this._change(el.dataset.c, el);
+      if (el && el.dataset.c !== 'pick-q') this._change(el.dataset.c, el);
+    });
+    // The picker's search filters as you type; the field keeps its focus and caret.
+    root.addEventListener('input', (ev) => {
+      const el = ev.target.closest('[data-c="pick-q"]');
+      if (!el || !this._ui.pick) return;
+      this._ui.pick.q = el.value;
+      this._ui.pickFocus = el.selectionStart ?? el.value.length;
+      this._render(true);
     });
     root.addEventListener('pointerdown', (ev) => {
       const sl = ev.target.closest('[data-slider]');
@@ -873,6 +920,42 @@ class WeekheatCard extends Base {
         break;
       }
       case 'rename-plan': ui.renamePlan = plan; break;
+      case 'sec': ui.sec = ui.sec === el.dataset.v ? null : el.dataset.v; ui.pick = null; break;
+      case 'pick-open': {
+        const same = ui.pick?.room === room.id && ui.pick.kind === el.dataset.v;
+        ui.pick = same ? null : { room: room.id, kind: el.dataset.v, q: '' };
+        if (!same) ui.pickFocus = 0;
+        break;
+      }
+      case 'pick': {
+        const d = this._draftFor(room);
+        const k = ui.pick?.kind;
+        if (k === 'th' && !d.thermostats.includes(el.dataset.v)) d.thermostats = [...d.thermostats, el.dataset.v];
+        else if (k === 'win' && !d.windows.includes(el.dataset.v)) d.windows = [...d.windows, el.dataset.v];
+        else if (k === 'rs') d.room_sensor = el.dataset.v;
+        ui.pick = null;
+        break;
+      }
+      case 'unpick': {
+        const d = this._draftFor(room);
+        const k = el.dataset.k;
+        if (k === 'th') d.thermostats = d.thermostats.filter((x) => x !== el.dataset.v);
+        else if (k === 'win') d.windows = d.windows.filter((x) => x !== el.dataset.v);
+        else if (k === 'rs') d.room_sensor = '';
+        break;
+      }
+      case 'margin': {
+        const d = this._draftFor(room);
+        const m = (+String(d.room_margin).replace(',', '.') || 0.5) + (+el.dataset.v) * 0.1;
+        d.room_margin = Math.max(0.1, Math.min(3, Math.round(m * 10) / 10));
+        break;
+      }
+      case 'goto-setup': {
+        const r = this._rooms.find((x) => x.id === el.dataset.v);
+        if (!r) return;
+        ui.view = 'rooms'; ui.open = r.id; ui.sub[r.id] = 'setup'; ui.sec = null; ui.pick = null; ui.draft = null;
+        break;
+      }
       case 'set-open':
         ui.setOpen = ui.setOpen === el.dataset.v ? null : el.dataset.v;
         if (ui.setOpen === 'add') ui.addRoom = { name: '', thermostats: [] };
@@ -1005,11 +1088,7 @@ class WeekheatCard extends Base {
       case 'w-day': this._draftFor(room).week[el.dataset.v] = v; break;
       case 'w-free': this._draftFor(room).free_day = v; break;
       case 'r-name': this._draftFor(room).name = v; break;
-      case 'r-win': { const d = this._draftFor(room); d.windows = v ? [...d.windows, el.dataset.v] : d.windows.filter((w) => w !== el.dataset.v); break; }
       case 'r-delay': this._draftFor(room).window_delay = v; return;
-      case 'r-sensor': this._draftFor(room).room_sensor = v; break;
-      case 'r-margin': this._draftFor(room).room_margin = v; return;
-      case 'r-th': { const d = this._draftFor(room); d.thermostats = v ? [...d.thermostats, el.dataset.v] : d.thermostats.filter((t) => t !== el.dataset.v); break; }
       case 'ap-name': ui.addPlan.name = v; return;
       case 'ap-template': ui.addPlan.template = v; return;
       case 'ar-name': ui.addRoom.name = v; return;
@@ -1103,6 +1182,11 @@ class WeekheatCard extends Base {
     const noScript = this._rooms && this._admin && !this._script ? `<div class="banner bad">${esc(t.no_script)}</div>` : '';
     this._cardEl.innerHTML = `<div class="top">${title}<span class="grow"></span>${dayChip}${gear}</div>
       ${msg}${err}${noScript}${notes}<div class="body">${body}</div>`;
+    if (ui.pickFocus != null) {
+      const q = this.shadowRoot.querySelector('[data-c="pick-q"]');
+      if (q) { q.focus(); q.setSelectionRange(ui.pickFocus, ui.pickFocus); }
+      ui.pickFocus = null;
+    }
   }
 
   /** The shadow DOM's fixed parts: the styles and the card. */
@@ -1165,12 +1249,13 @@ class WeekheatCard extends Base {
       <ha-icon class="chev" icon="${open ? 'mdi:chevron-up' : 'mdi:chevron-down'}"></ha-icon></div>`;
     if (!open) return `<div class="room" data-room="${room.id}">${head}</div>`;
     const sub = this._ui.sub[room.id] || 'control';
-    const seg = ['control', 'plan', 'week'].map((k) => `<button class="${sub === k ? 'on' : ''}" data-a="sub" data-v="${k}">${esc(t[`v_${k}`])}</button>`).join('');
+    const seg = ['control', 'plan', 'week', ...(this._admin ? ['setup'] : [])].map((k) => `<button class="${sub === k ? 'on' : ''}" data-a="sub" data-v="${k}">${esc(t[`v_${k}`])}</button>`).join('');
     const sw = `<label class="switch" title="${esc(n.heatingOff ? t.turn_on : t.turn_off)}"><span>${esc(t.heating_l_cap)}</span>
       <button class="tog ${n.heatingOff ? '' : 'on'}" data-a="power" role="switch" aria-checked="${!n.heatingOff}" ${!room.heating_switch && !this._admin ? 'disabled' : ''}><i></i></button></label>`;
     let detail;
     if (sub === 'plan') detail = this._renderPlan(room, n);
     else if (sub === 'week') detail = this._renderWeek(room);
+    else if (sub === 'setup' && this._admin) detail = this._renderRoomSetup(room, n);
     else detail = this._renderControl(room, n);
     return `<div class="room open" data-room="${room.id}">${head}
       <div class="rbar"><div class="segc">${seg}</div><span class="grow"></span>${sw}</div>${detail}</div>`;
@@ -1354,10 +1439,10 @@ class WeekheatCard extends Base {
     const so = ui.setOpen;
     const rooms = this._rooms.map((r) => {
       const n = this._roomNow(r);
-      const open = so === r.id;
-      const info = [`${r.thermostats.length} ${t.thermostats_short}`, `${(r.windows || []).length} ${t.windows_short}`, ...(n.active ? [] : [t.paused])].join(' · ');
-      return `<div class="srow" data-room="${r.id}"><div class="shead" data-a="set-open" data-v="${r.id}"><span>${esc(r.name)}</span><span class="dim small">${esc(info)}</span><span class="grow"></span>
-        <ha-icon class="chev" icon="${open ? 'mdi:chevron-up' : 'mdi:chevron-down'}"></ha-icon></div>${open ? this._renderRoomSettings(r, n) : ''}</div>`;
+      const info = [count(r.thermostats.length, t.thermostats_short), count((r.windows || []).length, t.windows_short),
+        ...(r.room_sensor ? [t.room_sensor_short] : []), ...(n.active ? [] : [t.paused])].join(' · ');
+      return `<div class="srow"><button class="shead plain" data-a="goto-setup" data-v="${r.id}"><span class="grow"><span class="block">${esc(r.name)}</span>
+        <span class="block dim small">${esc(info)}</span></span><ha-icon class="chev" icon="mdi:chevron-right"></ha-icon></button></div>`;
     }).join('');
     let add = '';
     if (so === 'add') {
@@ -1372,8 +1457,7 @@ class WeekheatCard extends Base {
     return `<div class="stitle">${esc(t.rooms)}</div>${rooms}
       <div class="srow"><div class="shead" data-a="set-open" data-v="add"><span class="accent">+ ${esc(t.add_room)}</span></div>${add}</div>
       <div class="stitle">${esc(t.day_settings)}</div>
-      <div class="srow"><div class="shead" data-a="set-open" data-v="days"><span>${esc(t.day_settings_sub)}</span><span class="grow"></span>
-        <ha-icon class="chev" icon="${so === 'days' ? 'mdi:chevron-up' : 'mdi:chevron-down'}"></ha-icon></div>${so === 'days' ? this._renderSettings() : ''}</div>
+      ${this._daySections(so)}
       <div class="stitle">${esc(t.exercise)}</div>
       <div class="srow"><div class="shead" data-a="set-open" data-v="exercise"><span>${esc(t.exercise_sub)}</span><span class="grow"></span>
         <span class="dim small">${esc(this._exerciseLine())}</span>
@@ -1385,29 +1469,93 @@ class WeekheatCard extends Base {
     return x.exercise_day === 'off' ? this._t.off : `${this._t.wd_short[x.exercise_day]} ${String(x.exercise_time).slice(0, 5)}`;
   }
 
-  _renderRoomSettings(room, n) {
+  /** The room's Setup tab (admins): name, then collapsible sections with a summary each. */
+  _renderRoomSetup(room, n) {
     const t = this._t;
+    const L = this._lang;
+    const ui = this._ui;
     const d = this._draftFor(room);
-    const climates = Object.values(this._hass.states).filter((s) => s.entity_id.startsWith('climate.'));
-    const contacts = Object.values(this._hass.states).filter((s) => d.windows.includes(s.entity_id)
-      || (s.entity_id.startsWith('binary_sensor.') && WINDOW_CLASSES.includes(s.attributes.device_class)))
-      .sort((a, b) => String(a.attributes.friendly_name).localeCompare(String(b.attributes.friendly_name)));
-    const temps = Object.values(this._hass.states).filter((s) => s.entity_id === d.room_sensor
-      || (s.entity_id.startsWith('sensor.') && s.attributes.device_class === 'temperature'))
-      .sort((a, b) => String(a.attributes.friendly_name).localeCompare(String(b.attributes.friendly_name)));
-    return `<div class="panel"><label class="field">${esc(t.name)} <input data-c="r-name" value="${esc(d.name)}"></label>
-      <div class="field">${esc(t.thermostats)}</div>
-      ${climates.map((s) => `<label class="check"><input type="checkbox" data-c="r-th" data-v="${s.entity_id}" ${d.thermostats.includes(s.entity_id) ? 'checked' : ''}> ${esc(s.attributes.friendly_name || s.entity_id)}</label>`).join('')}
-      <div class="field">${esc(t.windows)}</div>
-      ${contacts.map((s) => `<label class="check"><input type="checkbox" data-c="r-win" data-v="${s.entity_id}" ${d.windows.includes(s.entity_id) ? 'checked' : ''}> ${esc(s.attributes.friendly_name || s.entity_id)}</label>`).join('')}
-      <label class="field">${esc(t.window_delay)} <input type="number" inputmode="numeric" min="0" max="900" step="5" data-c="r-delay" value="${esc(d.window_delay)}"></label>
-      <div class="dim small">${esc(t.window_help)}</div>
-      <label class="field">${esc(t.room_sensor)} <select data-c="r-sensor"><option value="">${esc(t.none)}</option>${temps.map((s) => `<option value="${s.entity_id}" ${s.entity_id === d.room_sensor ? 'selected' : ''}>${esc(s.attributes.friendly_name || s.entity_id)}</option>`).join('')}</select></label>
-      ${d.room_sensor ? `<label class="field">${esc(t.room_margin)} <input type="number" inputmode="decimal" min="0.1" max="3" step="0.1" data-c="r-margin" value="${esc(d.room_margin)}"></label>` : ''}
-      <div class="dim small">${esc(t.room_help)}</div>
+    const nm = (e) => this._hass.states[e]?.attributes.friendly_name || e;
+    const delay = Math.round(+d.window_delay || 0);
+    const margin = +String(d.room_margin).replace(',', '.') || 0.5;
+    const fmtM = `${margin.toLocaleString(L === 'de' ? 'de-AT' : 'en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} °C`;
+    const sec = (key, title, summary, body) => {
+      const open = ui.sec === key;
+      return `<div class="sec ${open ? 'open' : ''}"><button class="shead plain" data-a="sec" data-v="${key}" aria-expanded="${open}">
+        <span class="stitle2">${esc(title)}</span><span class="grow"></span>${open ? '' : `<span class="dim small ell">${esc(summary)}</span>`}
+        <ha-icon class="chev" icon="${open ? 'mdi:chevron-up' : 'mdi:chevron-down'}"></ha-icon></button>${open ? `<div class="secbody">${body}</div>` : ''}</div>`;
+    };
+    const chips = (kind, list) => `<div class="chips">${list.map((e) => `<span class="echip">${esc(nm(e))}<button class="x" data-a="unpick" data-k="${kind}" data-v="${esc(e)}" aria-label="${esc(`${t.remove}: ${nm(e)}`)}">✕</button></span>`).join('')}
+      <button class="addchip" data-a="pick-open" data-v="${kind}">+ ${esc(t.add)}</button></div>${ui.pick?.room === room.id && ui.pick.kind === kind ? this._picker(room, kind, list) : ''}`;
+    const th = chips('th', d.thermostats);
+    const win = `${chips('win', d.windows)}
+      <label class="field">${esc(t.delay)} <input type="number" inputmode="numeric" min="0" max="900" step="5" data-c="r-delay" value="${esc(d.window_delay)}"></label>
+      <div class="dim small">${esc(t.window_help)}</div>`;
+    const rsState = d.room_sensor ? this._hass.states[d.room_sensor] : null;
+    const rs = d.room_sensor
+      ? `<div class="entry"><ha-icon icon="mdi:thermometer"></ha-icon><span class="grow ell"><span class="block">${esc(nm(d.room_sensor))}${rsState && !isNaN(+rsState.state) ? ` <span class="dim">· ${esc(fmtTemp(+rsState.state, L))}</span>` : ''}</span>
+          <span class="block dim small ell">${esc(d.room_sensor)}</span></span>
+          <button class="x" data-a="unpick" data-k="rs" data-v="${esc(d.room_sensor)}" aria-label="${esc(`${t.remove}: ${nm(d.room_sensor)}`)}">✕</button></div>
+        <div class="stepper"><span class="grow">${esc(t.room_margin)}</span><button class="round" data-a="margin" data-v="-1" aria-label="${esc(t.margin_less)}">−</button>
+          <span class="sval">${esc(fmtM)}</span><button class="round" data-a="margin" data-v="1" aria-label="${esc(t.margin_more)}">+</button></div>
+        <div class="dim small">${esc(t.room_closed_help.replace('den Spielraum', fmtM).replace('the margin', fmtM))}</div>`
+      : `${this._picker(room, 'rs', [])}<div class="dim small">${esc(t.room_help)}</div>`;
+    return `<div class="setup">
+      <label class="field">${esc(t.name)} <input data-c="r-name" value="${esc(d.name)}"></label>
+      ${sec('th', t.thermostats, d.thermostats.map(nm).join(', ') || '–', th)}
+      ${sec('win', t.windows_doors, d.windows.length ? `${d.windows.map(nm).join(', ')} · ${delay} s` : '–', win)}
+      ${sec('rs', t.room_sensor, d.room_sensor ? `${nm(d.room_sensor)} · ${fmtM}` : '–', rs)}
       <div class="actions"><button class="btn flat small" data-a="active">${esc(n.active ? t.pause_room : t.activate_room)}</button>
         <span class="grow"></span><button class="btn small" data-a="save-room">${esc(t.save)}</button></div>
       <div class="dim small">${esc(t.pause_help)}</div></div>`;
+  }
+
+  /** The area name of an entity (its own area, else its device's), from the registries HA hands the card. */
+  _areaOf(e) {
+    const h = this._hass;
+    const ent = h.entities?.[e];
+    const aid = ent?.area_id || (ent?.device_id && h.devices?.[ent.device_id]?.area_id);
+    return (aid && h.areas?.[aid]?.name) || '';
+  }
+
+  /** Search field and results for adding an entity of `kind`; the room's area (its first thermostat's) first. */
+  _picker(room, kind, exclude) {
+    const t = this._t;
+    const L = this._lang;
+    const ui = this._ui;
+    const q = ui.pick?.room === room.id && ui.pick.kind === kind ? ui.pick.q : '';
+    const roomArea = this._areaOf(room.thermostats[0]) || '';
+    const { here, other } = pickCandidates(Object.values(this._hass.states), { kind, q, exclude, areaOf: (e) => this._areaOf(e), roomArea });
+    const MAX = 8;
+    const item = (s) => {
+      const v = kind === 'rs' ? (isNaN(+s.state) ? null : +s.state) : kind === 'th' ? s.attributes.current_temperature : null;
+      const area = this._areaOf(s.entity_id);
+      return `<button class="pitem" data-a="pick" data-v="${esc(s.entity_id)}"><span class="block">${esc(s.attributes.friendly_name || s.entity_id)}${typeof v === 'number' ? ` <span class="dim">· ${esc(fmtTemp(v, L))}</span>` : ''}</span>
+        <span class="block dim small ell">${esc(s.entity_id)}${area ? ` · ${esc(area)}` : ''}</span></button>`;
+    };
+    const group = (title, list) => (list.length ? `<div class="pgroup">${esc(title)}</div>${list.slice(0, MAX).map(item).join('')}${list.length > MAX ? `<div class="pgroup">${list.length - MAX} ${esc(t.more_matches)}</div>` : ''}` : '');
+    const res = here.length || other.length
+      ? `${group(roomArea ? `${t.in_area} ${roomArea}` : '', here)}${group(here.length ? t.other_areas : '', other)}`
+      : `<div class="pgroup">${esc(t.no_match)}</div>`;
+    if (kind === 'rs' && ui.pick?.room !== room.id) ui.pick = { room: room.id, kind: 'rs', q: '' };
+    return `<div class="picker"><label class="search"><ha-icon icon="mdi:magnify"></ha-icon>
+      <input data-c="pick-q" value="${esc(q)}" placeholder="${esc(t.search)}" aria-label="${esc(t.search)}" autocomplete="off"></label>
+      <div class="plist">${res}</div></div>`;
+  }
+
+  /** The day settings in three sections (Workday and calendars, keyword calendars, keyword rules), one draft. */
+  _daySections(so) {
+    const t = this._t;
+    const i = this._script?.use_blueprint?.input || {};
+    const nm = (e) => this._hass.states[e]?.attributes.friendly_name || e || '–';
+    const cals = Array.isArray(i.calendars) ? i.calendars : i.calendars ? [i.calendars] : [];
+    const parts = [
+      ['days-wd', t.day_wd, nm(i.workday)],
+      ['days-cal', t.keyword_calendars, count(cals.length, t.calendars_n)],
+      ['days-rules', t.rules, count((i.rules || []).length, t.rules_n)],
+    ];
+    return parts.map(([k, title, sum]) => `<div class="srow"><button class="shead plain" data-a="set-open" data-v="${k}" aria-expanded="${so === k}"><span>${esc(title)}</span><span class="grow"></span>
+      ${so === k ? '' : `<span class="dim small ell">${esc(sum)}</span>`}<ha-icon class="chev" icon="${so === k ? 'mdi:chevron-up' : 'mdi:chevron-down'}"></ha-icon></button>${so === k ? this._renderSettings(k) : ''}</div>`).join('');
   }
 
   _renderDays() {
@@ -1442,7 +1590,7 @@ class WeekheatCard extends Base {
         <button class="btn small" data-a="day-save">${esc(t.save)}</button></div></div>`;
   }
 
-  _renderSettings() {
+  _renderSettings(part) {
     const t = this._t;
     if (!this._script) return `<div class="note">${esc(t.no_script)}</div>`;
     const s = this._settingsDraft();
@@ -1457,14 +1605,14 @@ class WeekheatCard extends Base {
       <select data-c="s-plan" data-i="${i}"><option value="">→ ${esc(t.rule_free)}</option>${[...new Set([...planNames, ...(r.plan ? [r.plan] : [])])].map((n) => `<option value="${esc(n)}" ${n === r.plan ? 'selected' : ''}>→ ${esc(t.plan)}: ${esc(n)}</option>`).join('')}</select>
       <button class="icon" data-a="up-rule" data-i="${i}" ${i === 0 ? 'disabled' : ''}>↑</button>
       <button class="icon" data-a="del-rule" data-i="${i}">✕</button></div>`).join('');
-    return `<div class="panel">
-      <div class="ptitle">${esc(t.keyword_calendars)}</div>
-      ${cals.filter((c) => c.entity_id !== s.exceptions && c.entity_id !== s.holidays).map((c) => `<label class="check"><input type="checkbox" data-c="s-cal" data-v="${c.entity_id}" ${s.calendars.includes(c.entity_id) ? 'checked' : ''}> ${name(c)}</label>`).join('')}
-      <div class="ptitle">${esc(t.rules)}</div>${rules}
-      <button class="btn flat small" data-a="add-rule">+ ${esc(t.add_rule)}</button>
-      <label class="field">${esc(t.workday_sensor)} ${sel('s-workday', s.workday, workdays)}</label>
+    const body = part === 'days-cal'
+      ? cals.filter((c) => c.entity_id !== s.exceptions && c.entity_id !== s.holidays).map((c) => `<label class="check"><input type="checkbox" data-c="s-cal" data-v="${c.entity_id}" ${s.calendars.includes(c.entity_id) ? 'checked' : ''}> ${name(c)}</label>`).join('')
+      : part === 'days-rules'
+        ? `${rules}<button class="btn flat small" data-a="add-rule">+ ${esc(t.add_rule)}</button>`
+        : `<label class="field">${esc(t.workday_sensor)} ${sel('s-workday', s.workday, workdays)}</label>
       <label class="field">${esc(t.exceptions_calendar)} ${sel('s-exc', s.exceptions, cals)}</label>
-      <label class="field">${esc(t.holiday_calendar)} ${sel('s-hol', s.holidays, cals, true)}</label>
+      <label class="field">${esc(t.holiday_calendar)} ${sel('s-hol', s.holidays, cals, true)}</label>`;
+    return `<div class="panel">${body}
       <div class="actions"><span class="grow"></span><button class="btn flat small" data-a="reset-settings">${esc(t.cancel)}</button>
         <button class="btn small" data-a="save-settings">${esc(t.save)}</button></div></div>`;
   }
@@ -1604,6 +1752,31 @@ const STYLE = `
   .now { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--primary-text-color); }
   .ticks { display: flex; justify-content: space-between; font-size: .68em; color: var(--secondary-text-color); }
   .panel { border: 1px solid var(--divider-color); border-radius: 8px; padding: 8px; margin: 8px 0; }
+  button.plain { border: 0; background: none; font: inherit; color: inherit; text-align: left; width: 100%; min-height: 44px; }
+  .block { display: block; }
+  .ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .setup { margin: 8px 0; }
+  .sec { border: 1px solid var(--divider-color); border-radius: 8px; margin: 6px 0; }
+  .sec .shead { padding: 8px 10px; }
+  .sec.open { background: color-mix(in srgb, var(--primary-text-color) 3%, transparent); }
+  .stitle2 { font-weight: 500; flex: none; }
+  .secbody { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 8px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .echip { display: inline-flex; align-items: center; gap: 2px; background: var(--secondary-background-color); border-radius: 16px; padding: 2px 2px 2px 12px; font-size: .92em; }
+  .x { border: 0; background: none; color: var(--secondary-text-color); width: 32px; height: 32px; border-radius: 16px; cursor: pointer; font: inherit; flex: none; }
+  .addchip { border: 1px dashed var(--divider-color); background: none; color: var(--primary-color); border-radius: 16px; padding: 6px 12px; font: inherit; font-size: .92em; cursor: pointer; }
+  .picker { border: 1px solid var(--divider-color); border-radius: 8px; background: var(--card-background-color); overflow: hidden; }
+  .search { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--divider-color); color: var(--secondary-text-color); }
+  .search input { flex: 1; border: 0; padding: 8px 2px; outline: none; background: none; }
+  .plist { max-height: 320px; overflow-y: auto; }
+  .pgroup { font-size: .8em; color: var(--secondary-text-color); padding: 8px 10px 2px; }
+  .pgroup:empty { display: none; }
+  .pitem { display: block; width: 100%; border: 0; background: none; font: inherit; color: var(--primary-text-color); text-align: left; padding: 6px 10px; cursor: pointer; }
+  .pitem:hover, .pitem:focus-visible { background: color-mix(in srgb, var(--primary-color) 12%, transparent); }
+  .entry { display: flex; align-items: center; gap: 8px; border: 1px solid var(--divider-color); border-radius: 8px; padding: 6px 4px 6px 10px; background: var(--card-background-color); }
+  .entry ha-icon { color: var(--state-climate-heat-color, #ff8a50); flex: none; }
+  .stepper { display: flex; align-items: center; gap: 8px; }
+  .sval { min-width: 64px; text-align: center; font-weight: 500; }
   .ptitle { font-weight: 500; margin: 6px 0 4px; }
   .phead { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
   .pname { font-weight: 500; flex: 1; min-width: 0; }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   toMin, fromMin, nowIn, addDays, blocksToPeriods, periodsToBlocks, checkPeriods, periodAt, slugify,
   planLabel, matchPlan, planForDay, parseException, exceptionTitle, reasonText, fmtTemp, STARTER,
-  roomFromInput, DIRECTORY_FIELDS, exerciseFromInput,
+  roomFromInput, DIRECTORY_FIELDS, exerciseFromInput, pickKind, pickCandidates, count,
 } from '../weekheat-card.js';
 
 test('time', () => {
@@ -126,4 +126,38 @@ test('roomFromInput reads blueprint inputs with defaults', () => {
 test('exerciseFromInput fills in the defaults', () => {
   assert.deepEqual(exerciseFromInput(), { exercise_day: 'off', exercise_time: '13:00:00', exercise_wait: 60 });
   assert.deepEqual(exerciseFromInput({ exercise_day: 'sat', exercise_wait: 90 }), { exercise_day: 'sat', exercise_time: '13:00:00', exercise_wait: 90 });
+});
+
+test('pickCandidates filters by kind and words, room area first', () => {
+  const st = (entity_id, friendly_name, device_class) => ({ entity_id, attributes: { friendly_name, device_class } });
+  const states = [
+    st('sensor.t1_bad', 'Badezimmer', 'temperature'),
+    st('sensor.motion_bad', 'Badezimmer Motion Sensor', 'temperature'),
+    st('sensor.t1_kinder', 'Kinderzimmer', 'temperature'),
+    st('sensor.hum_bad', 'Badezimmer Feuchte', 'humidity'),
+    st('binary_sensor.fenster_bad', 'Badezimmer Fenster', 'window'),
+    st('binary_sensor.motion', 'Bewegung', 'motion'),
+    st('climate.bad', 'Badezimmer', undefined),
+  ];
+  const area = { 'sensor.t1_bad': 'Badezimmer', 'sensor.motion_bad': 'Badezimmer', 'sensor.t1_kinder': 'Kinderzimmer' };
+  const areaOf = (e) => area[e] || '';
+  assert.ok(pickKind(states[4], 'win'));
+  assert.ok(!pickKind(states[5], 'win'));
+  assert.ok(pickKind(states[6], 'th'));
+  const all = pickCandidates(states, { kind: 'rs', areaOf, roomArea: 'Badezimmer' });
+  assert.deepEqual(all.here.map((s) => s.entity_id), ['sensor.t1_bad', 'sensor.motion_bad']);
+  assert.deepEqual(all.other.map((s) => s.entity_id), ['sensor.t1_kinder']);
+  // every word must match somewhere: name, entity id or area
+  assert.deepEqual(pickCandidates(states, { kind: 'rs', q: 'bad motion', areaOf }).other.map((s) => s.entity_id), ['sensor.motion_bad']);
+  assert.deepEqual(pickCandidates(states, { kind: 'rs', q: 'kinder', areaOf }).other.map((s) => s.entity_id), ['sensor.t1_kinder']);
+  // already chosen ones are left out; no room area: all in `other`
+  const ex = pickCandidates(states, { kind: 'rs', exclude: ['sensor.t1_bad'], areaOf });
+  assert.deepEqual(ex.here, []);
+  assert.equal(ex.other.length, 2);
+});
+
+test('count picks singular or plural', () => {
+  assert.equal(count(1, ['Regel', 'Regeln']), '1 Regel');
+  assert.equal(count(0, ['Regel', 'Regeln']), '0 Regeln');
+  assert.equal(count(3, ['Kontakt', 'Kontakte']), '3 Kontakte');
 });

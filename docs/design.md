@@ -325,9 +325,15 @@ titles (`Working day`, `Free day`) are read too. Writing uses `calendar.create_e
   the free-day plan.
 - **Days**: the next 14 days from the day script: date, working/free, reason, the plan each room will
   use; today and tomorrow highlighted. Tap a day to set an exception. Shared by all rooms.
-- **Settings** (home): keyword calendars (picked from the calendar entities), keyword rules (keyword
-  plus "free day" or a plan name, reorderable), the Workday sensor, the exceptions and holiday
-  calendars. Saved as the day script's inputs. Plan names offered are those used in any room.
+- **Setup tab** of an opened room (admins only): the name, then one collapsible section each for the
+  thermostats, the windows and doors (with the delay) and the room sensor (with the margin), each showing
+  a summary while closed; pause and save. Entities are added with a search (name, entity id, area; the
+  room's area, taken from its first thermostat, first) and shown as chips, instead of a checkbox per
+  entity in the home.
+- **Settings** (home): the rooms as a list (a tap opens the room's Setup tab), add room, then the day
+  settings in three sections: the Workday sensor with the exceptions and holiday calendars, the keyword
+  calendars (picked from the calendar entities), the keyword rules (keyword plus "free day" or a plan
+  name, reorderable). Saved as the day script's inputs. Plan names offered are those used in any room.
 - **Setup**: "Add room" asks for a name and thermostats, then creates the starter plans, the state
   helper and the automation. Missing pieces are listed per room with a button to create them.
 - **Language**: German and English, by the HA user's language.

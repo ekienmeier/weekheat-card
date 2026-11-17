@@ -13,8 +13,9 @@ single setpoint.
   until the next period with a different temperature. There is no manual mode to leave.
 - The card lists the rooms with their status and temperature. An opened room has three views: **Control**
   (the dial and the heating switch), **Plan** (one plan at a time: a day chart and its periods) and
-  **Week**. The day list sits behind the day chip at the top, the setup (rooms, calendars, keyword rules)
-  behind the gear.
+  **Week**, and for administrators **Setup** (thermostats, windows and doors, room sensor). The day list
+  sits behind the day chip at the top, the home-wide settings (rooms, calendars, keyword rules, valve
+  exercise) behind the gear.
 - An opened room shows its setpoint on a **dial** (drag the handle, use − / + or the arrow keys) or
   on a horizontal **slider** (drag or tap the bar, arrow keys), with the room temperature marked on both.
 - **Windows and doors**: while a room's window or door sensor is open (for a delay, 30 s by default), its
@@ -30,7 +31,7 @@ single setpoint.
 Based on the idea and structure of [Temperate](https://github.com/xman2000/temperate-card) by Stephen
 (MIT), which does this for heat/cool thermostats with one day plan. Design: [docs/design.md](docs/design.md).
 
-Status: early (0.9). Tested with Aqara E1/W600 thermostats through HomeKit Controller on HA 2026.11.
+Status: early (0.10). Tested with Aqara E1/W600 thermostats through HomeKit Controller on HA 2026.11.
 
 ## Parts
 
