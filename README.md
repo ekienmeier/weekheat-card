@@ -99,6 +99,22 @@ also be added in Home Assistant's calendar view.
 - `tools/shoot.mjs`: screenshots of a dashboard with Playwright (card or whole page, dialogs included), with
   the working copy of the card in place of the installed one.
 
+## Versioning
+
+[Semantic Versioning](https://semver.org), still below 1.0:
+
+- **Minor** (0.x.0): a new feature or a visible change in behaviour or on the card.
+- **Patch** (0.x.y): a fix, or something taken back, without a new feature.
+- **Major**: 1.0.0 once the room automation's inputs and the state helper's format are stable, so an
+  update needs no manual steps. Below 1.0 a minor version may still break things; its release notes say
+  what to do.
+- Changes to docs, tests or `tools/` alone get no new version.
+- The blueprints have no version of their own: they are released with the card. The release notes say
+  when a blueprint must be re-imported.
+
+A release is: `VERSION` in `weekheat-card.js` and the status line above, a commit titled
+`… (x.y.z)`, a tag `vx.y.z` and a GitHub release with short notes (HACS offers it as the update).
+
 ## License
 
 MIT
