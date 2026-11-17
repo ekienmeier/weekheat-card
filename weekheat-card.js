@@ -2,7 +2,7 @@
 // Pairs with the Weekheat blueprints (weekheat_day script, weekheat_room automation).
 // The first part (exported) is plain logic without DOM, tested in tests/logic.test.mjs.
 
-export const VERSION = '0.10.0';
+export const VERSION = '0.11.0';
 export const WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const SCHEDULE_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 export const ROOM_BLUEPRINT = 'weekheat_room.yaml';
@@ -33,6 +33,17 @@ export const WINDOW_CLASSES = ['window', 'door', 'opening', 'garage_door'];
 /** "1 Regel", "2 Regeln": `n` with the singular or plural of `[one, many]`. */
 export function count(n, [one, many]) {
   return `${n} ${n === 1 ? one : many}`;
+}
+
+/** A setpoint kept within the thermostats' range. */
+export function clampT(v) { return Math.max(MIN_T, Math.min(MAX_T, v)); }
+
+/** The status text's setpoints: one value, or each thermostat's when they differ ("18 / 22 °C"). */
+export function targetsText(targets, lang) {
+  const v = targets.filter((x) => typeof x === 'number');
+  if (!v.length) return '–';
+  if (v.every((x) => Math.abs(x - v[0]) < 0.05)) return fmtTemp(v[0], lang);
+  return `${v.map((x) => Number(x).toLocaleString(lang === 'de' ? 'de-AT' : 'en-GB', { maximumFractionDigits: 1 })).join(' / ')} °C`;
 }
 
 // ---------- entity picker ----------
@@ -269,7 +280,8 @@ export const I18N = {
     confirm_exercise: 'Ventilpflege jetzt in allen aktiven Räumen ausführen?',
     window_help: 'Ist einer davon so lange offen, werden die Thermostate auf 5 °C gestellt; sind alle wieder zu, gilt wieder der Wert von vorher (oder der Plan, falls inzwischen eine neue Periode begann).',
     room_sensor: 'Raumsensor', room_margin: 'Spielraum', rc_closed: 'Warm genug · Ventil zu',
-    v_setup: 'Einrichtung', search: 'Suchen', add: 'Hinzufügen', remove: 'Entfernen', in_area: 'Im Bereich',
+    v_setup: 'Einrichtung', all_th: 'Alle', both_th: 'Beide', both_help: 'verschiebt alle um gleich viel', to_plan: 'Zurück zum Plan',
+    manual_until: 'Manuelle Werte gelten bis', manual_then: ', dann wieder der Plan.', colder: 'Kälter', warmer: 'Wärmer', pick_th: 'Thermostat wählen', search: 'Suchen', add: 'Hinzufügen', remove: 'Entfernen', in_area: 'Im Bereich',
     other_areas: 'Andere Bereiche', no_match: 'Nichts gefunden', more_matches: 'weitere – Suche verfeinern',
     windows_doors: 'Fenster und Türen', delay: 'Verzögerung (Sekunden)', margin_less: 'Spielraum kleiner', margin_more: 'Spielraum größer',
     day_wd: 'Workday und Feiertage', calendars_n: ['Kalender', 'Kalender'], rules_n: ['Regel', 'Regeln'], room_sensor_short: 'Raumsensor',
@@ -315,7 +327,8 @@ export const I18N = {
     confirm_exercise: 'Run the valve exercise now in all active rooms?',
     window_help: 'When one of them has been open this long, the thermostats are set to 5 °C; when all are closed again, the value from before applies again (or the plan, if a new period began in between).',
     room_sensor: 'Room sensor', room_margin: 'Margin', rc_closed: 'Warm enough · valve closed',
-    v_setup: 'Setup', search: 'Search', add: 'Add', remove: 'Remove', in_area: 'In the area',
+    v_setup: 'Setup', all_th: 'All', both_th: 'All together', both_help: 'moves all by the same amount', to_plan: 'Back to plan',
+    manual_until: 'Manual values hold until', manual_then: ', then the plan again.', colder: 'Colder', warmer: 'Warmer', pick_th: 'Pick a thermostat', search: 'Search', add: 'Add', remove: 'Remove', in_area: 'In the area',
     other_areas: 'Other areas', no_match: 'No match', more_matches: 'more – refine the search',
     windows_doors: 'Windows and doors', delay: 'Delay (seconds)', margin_less: 'Smaller margin', margin_more: 'Larger margin',
     day_wd: 'Workday and holidays', calendars_n: ['calendar', 'calendars'], rules_n: ['rule', 'rules'], room_sensor_short: 'room sensor',
@@ -597,7 +610,7 @@ class WeekheatCard extends Base {
       : avail.some((s) => s.state === 'off' || Math.abs((s.attributes.temperature ?? -99) - wanted) >= 0.25));
     const rs = room.room_sensor ? h.states[room.room_sensor] : null;
     const roomT = rs && rs.state !== '' && !isNaN(+rs.state) ? +rs.state : null;
-    return { exercise, heatingOff, windowOpen, roomClosed, openWin, plan, periods, at, wanted, target,
+    return { exercise, heatingOff, windowOpen, roomClosed, openWin, plan, periods, at, wanted, target, saved,
       current: roomT ?? (cur.length ? cur.reduce((a, b) => a + b, 0) / cur.length : null),
       unavailable: th.length - avail.length, off: avail.some((s) => s.state === 'off'), manual,
       active: h.states[room.entity]?.state === 'on', step: avail[0]?.attributes.target_temp_step || 0.5,
@@ -605,6 +618,54 @@ class WeekheatCard extends Base {
       heating: !roomClosed && avail.some((s) => s.attributes.hvac_action === 'heating'
         && !(typeof s.attributes.current_temperature === 'number' && typeof s.attributes.temperature === 'number'
           && s.attributes.current_temperature >= s.attributes.temperature - 0.2)) };
+  }
+
+  /** The room's situation as seen by one thermostat `e` (its setpoint, temperature, manual and heating flags);
+   * `n` is the room's (from _roomNow). While the room sensor holds the valves closed, its saved setpoint counts. */
+  _thNow(room, n, e) {
+    const s = this._hass.states[e];
+    const i = room.thermostats.indexOf(e);
+    const ok = s && !['unavailable', 'unknown'].includes(s.state);
+    let target = ok ? s.attributes.temperature : null;
+    if (n.roomClosed && typeof n.saved?.[i] === 'number') target = n.saved[i];
+    const cur = ok ? s.attributes.current_temperature : null;
+    const manual = !n.exercise && !n.heatingOff && !n.windowOpen && n.wanted != null && ok
+      && (s.state === 'off' || typeof target !== 'number' || Math.abs(target - n.wanted) >= 0.25);
+    const heating = !n.roomClosed && ok && s.attributes.hvac_action === 'heating'
+      && !(typeof cur === 'number' && typeof target === 'number' && cur >= target - 0.2);
+    return { ...n, target, current: typeof cur === 'number' ? cur : n.current, manual, heating, th: e, label: this._thLabel(room, e),
+      step: (ok && s.attributes.target_temp_step) || n.step };
+  }
+
+  /** A thermostat's short name: its friendly name without the room's name in front ("Couch"). */
+  _thLabel(room, e) {
+    const f = this._hass.states[e]?.attributes.friendly_name || e;
+    return planLabel(f, room.name) || f;
+  }
+
+  /** What a control for `th` (a thermostat, or '' for all of the room's) shows. */
+  _ctlNow(room, th) {
+    const n = this._roomNow(room);
+    return th && room.thermostats.includes(th) ? this._thNow(room, n, th) : n;
+  }
+
+  /** The value a control for `th` shows now: one being set, else its setpoint (plus a pending "all" step). */
+  _shown(room, th, n) {
+    const st = this._stepTarget;
+    if (st && st.room === room.id && st.th === (th || '')) return st.value;
+    const sa = this._stepAll;
+    if (sa && sa.room === room.id && th && typeof sa.base[th] === 'number') return clampT(sa.base[th] + sa.delta);
+    // "All" while the thermostats differ: start from their average.
+    const mixed = !th && this._mixed(room, n);
+    if (mixed) return Math.round(mixed.reduce((a, b) => a + b, 0) / mixed.length / n.step) * n.step;
+    return n.target;
+  }
+
+  /** The room's setpoints when its thermostats differ, else null. */
+  _mixed(room, n) {
+    if (room.thermostats.length < 2) return null;
+    const v = room.thermostats.map((e) => this._thNow(room, n, e).target).filter((x) => typeof x === 'number');
+    return v.length > 1 && v.some((x) => Math.abs(x - v[0]) >= 0.05) ? v : null;
   }
 
   // ---------- actions ----------
@@ -801,7 +862,7 @@ class WeekheatCard extends Base {
       if (sl && ev.button <= 0 && ev.target.closest('.sbar')) {
         ev.preventDefault();
         sl.setPointerCapture(ev.pointerId);
-        this._drag = { room: this._room(sl), el: sl, slider: true };
+        this._drag = { room: this._room(sl), el: sl, slider: true, th: sl.dataset.th || '' };
         this._dragMove(ev);
         return;
       }
@@ -812,15 +873,15 @@ class WeekheatCard extends Base {
       if (d < DIAL.r - 28 || d > DIAL.r + 22) return; // only the ring
       ev.preventDefault();
       svg.setPointerCapture(ev.pointerId);
-      this._drag = { room: this._room(svg), svg };
+      this._drag = { room: this._room(svg), svg, th: svg.dataset.th || '' };
       this._dragMove(ev);
     });
     root.addEventListener('pointermove', (ev) => { if (this._drag) this._dragMove(ev); });
     const end = () => {
       if (!this._drag) return;
-      const { room, value } = this._drag;
+      const { room, value, th } = this._drag;
       this._drag = null;
-      if (value != null) this._setTarget(room, value, 300);
+      if (value != null) this._setTarget(room, value, 300, th);
     };
     root.addEventListener('pointerup', end);
     // Cancelled (e.g. the page scrolled instead): drop the value, write nothing.
@@ -832,24 +893,53 @@ class WeekheatCard extends Base {
       if (!k) return;
       ev.preventDefault();
       const room = this._room(svg);
-      const n = this._roomNow(room);
-      const base = this._stepTarget?.room === room.id ? this._stepTarget.value : (n.target ?? n.wanted ?? 20);
-      this._setTarget(room, base + k * n.step, 700);
-      this.shadowRoot.querySelector(`[data-room="${room.id}"] svg[data-dial], [data-room="${room.id}"] [data-slider]`)?.focus();
+      const th = svg.dataset.th || '';
+      const n = this._ctlNow(room, th);
+      const base = this._shown(room, th, n) ?? n.wanted ?? 20;
+      this._setTarget(room, base + k * n.step, 700, th);
+      this.shadowRoot.querySelector(`[data-room="${room.id}"] [data-th="${th}"]`)?.focus();
     });
     root.addEventListener('focusout', () => { if (this._pending) { this._pending = false; setTimeout(() => this._render(), 0); } });
   }
 
-  /** Show `v` at once and write it to the room's thermostats after `delay` ms (repeated calls restart the wait). */
-  _setTarget(room, v, delay) {
-    const n = this._roomNow(room);
-    v = Math.max(MIN_T, Math.min(MAX_T, Math.round(v / n.step) * n.step));
-    this._stepTarget = { room: room.id, value: v };
+  /** Show `v` at once and write it after `delay` ms (repeated calls restart the wait) to thermostat `th`,
+   * or to all of the room's thermostats when `th` is empty. */
+  _setTarget(room, v, delay, th = '') {
+    const n = this._ctlNow(room, th);
+    v = clampT(Math.round(v / n.step) * n.step);
+    if (this._stepTarget && (this._stepTarget.room !== room.id || this._stepTarget.th !== th)) this._flushStep();
+    this._stepTarget = { room: room.id, th, value: v };
     clearTimeout(this._stepTimer);
-    this._stepTimer = setTimeout(() => {
-      this._run(() => this._hass.callService('climate', 'set_temperature', { entity_id: room.thermostats, temperature: v }), false)
-        .finally(() => { setTimeout(() => { if (this._stepTarget?.value === v) { this._stepTarget = null; this._render(); } }, 4000); });
-    }, delay);
+    this._stepTimer = setTimeout(() => this._flushStep(), delay);
+    this._render();
+  }
+
+  /** Write a pending value of _setTarget now. */
+  _flushStep() {
+    clearTimeout(this._stepTimer);
+    const st = this._stepTarget;
+    const room = st && this._rooms.find((r) => r.id === st.room);
+    if (!room) return;
+    const ids = st.th ? [st.th] : room.thermostats;
+    this._run(() => this._hass.callService('climate', 'set_temperature', { entity_id: ids, temperature: st.value }), false)
+      .finally(() => { setTimeout(() => { if (this._stepTarget === st) { this._stepTarget = null; this._render(); } }, 4000); });
+  }
+
+  /** "All together": shift each of the room's thermostats by `k` steps from its own setpoint, written after a short wait. */
+  _stepAllBy(room, k) {
+    const n = this._roomNow(room);
+    if (!this._stepAll || this._stepAll.room !== room.id) {
+      this._stepAll = { room: room.id, delta: 0, base: Object.fromEntries(room.thermostats.map((e) => [e, this._thNow(room, n, e).target])) };
+    }
+    const sa = this._stepAll;
+    sa.delta = Math.round((sa.delta + k * n.step) * 10) / 10;
+    clearTimeout(this._stepAllTimer);
+    this._stepAllTimer = setTimeout(() => {
+      const writes = Object.entries(sa.base).filter(([, b]) => typeof b === 'number');
+      this._run(() => Promise.all(writes.map(([e, b]) =>
+        this._hass.callService('climate', 'set_temperature', { entity_id: e, temperature: clampT(b + sa.delta) }))), false)
+        .finally(() => { setTimeout(() => { if (this._stepAll === sa) { this._stepAll = null; this._render(); } }, 4000); });
+    }, 700);
     this._render();
   }
 
@@ -859,8 +949,8 @@ class WeekheatCard extends Base {
   }
 
   _dragMove(ev) {
-    const { room, svg } = this._drag;
-    const n = this._roomNow(room);
+    const { room, svg, th } = this._drag;
+    const n = this._ctlNow(room, th);
     if (this._drag.slider) {
       const b = this._drag.el.querySelector('.sbar').getBoundingClientRect();
       const lo = this._config.dial_min;
@@ -962,10 +1052,20 @@ class WeekheatCard extends Base {
         ui.draft = null; ui.settings = null; ui.exercise = null;
         break;
       case 'step': {
+        const th = el.dataset.th || '';
+        const n = this._ctlNow(room, th);
+        const base = this._shown(room, th, n) ?? n.wanted ?? 20;
+        this._setTarget(room, base + (+el.dataset.v) * n.step, 700, th);
+        return;
+      }
+      case 'step-all': this._stepAllBy(room, +el.dataset.v); return;
+      case 'th-sel': ui.thSel = { ...(ui.thSel || {}), [room.id]: el.dataset.v }; break;
+      case 'to-plan': {
         const n = this._roomNow(room);
-        const base = this._stepTarget?.room === room.id ? this._stepTarget.value : (n.target ?? n.wanted ?? 20);
-        this._setTarget(room, base + (+el.dataset.v) * n.step, 700);
-        break;
+        if (n.wanted == null) return;
+        this._stepTarget = null; this._stepAll = null;
+        this._run(() => this._hass.callService('climate', 'set_temperature', { entity_id: room.thermostats, temperature: n.wanted }), false);
+        return;
       }
       case 'layout': {
         this._layout = this._layout === 'dial' ? 'compact' : 'dial';
@@ -1222,9 +1322,10 @@ class WeekheatCard extends Base {
     if (n.exercise) return { icon: 'mdi:pipe-valve', cls: 'window', text: t.exercise };
     if (n.heatingOff) return { icon: 'mdi:power', cls: 'paused', text: t.heating_off };
     if (n.windowOpen) return { icon: 'mdi:window-open-variant', cls: 'window', text: `${t.window_open} · ${fmtTemp(OFF_T, L)}` };
-    if (n.roomClosed) return { icon: 'mdi:valve-closed', cls: n.manual ? 'manual' : 'ok', text: `${t.rc_closed} · ${fmtTemp(n.target, L)}${until}` };
-    if (n.manual) return { icon: 'mdi:hand-back-right-outline', cls: 'manual', text: `${t.manual} · ${fmtTemp(n.target, L)}${until}` };
-    if (n.heating) return { icon: 'mdi:fire', cls: 'heat', text: `${t.heating} · ${t.to} ${fmtTemp(n.target, L)}${until}` };
+    const tt = room.thermostats.length > 1 ? targetsText(room.thermostats.map((e) => this._thNow(room, n, e).target), L) : fmtTemp(n.target, L);
+    if (n.roomClosed) return { icon: 'mdi:valve-closed', cls: n.manual ? 'manual' : 'ok', text: `${t.rc_closed} · ${tt}${until}` };
+    if (n.manual) return { icon: 'mdi:hand-back-right-outline', cls: 'manual', text: `${t.manual} · ${tt}${until}` };
+    if (n.heating) return { icon: 'mdi:fire', cls: 'heat', text: `${t.heating} · ${t.to} ${tt}${until}` };
     return { icon: 'mdi:check', cls: 'ok', text: n.at ? `${fmtTemp(n.at.period, L)}${until || ` ${t.until} ${t.tomorrow_l}`}` : '–' };
   }
 
@@ -1263,25 +1364,54 @@ class WeekheatCard extends Base {
 
   _renderControl(room, n) {
     const t = this._t;
-    const shown = this._stepTarget?.room === room.id ? this._stepTarget.value : n.target;
-    const ctrl = this._layout === 'dial' ? `<div class="dialbox">
-        <svg data-dial viewBox="0 0 200 200" tabindex="0" role="slider" aria-label="${esc(t.setpoint)}" aria-valuemin="${MIN_T}" aria-valuemax="${MAX_T}" aria-valuenow="${shown ?? ''}">${this._dialSvg(room, n, shown)}</svg>
-        <div class="ctrl dialctrl"><button class="round" data-a="step" data-v="-1">−</button><button class="round" data-a="step" data-v="1">+</button></div></div>`
-      : `<div class="slider" data-slider tabindex="0" role="slider" aria-label="${esc(t.setpoint)}" aria-valuemin="${this._config.dial_min}" aria-valuemax="${this._config.dial_max}" aria-valuenow="${shown ?? ''}">${this._sliderHtml(room, n, shown)}</div>`;
+    const L = this._lang;
+    const multi = room.thermostats.length > 1;
+    const dial = this._layout === 'dial';
+    let ctrl;
+    if (dial) {
+      // Several thermostats: pick one (or all) above the one dial.
+      const sel = multi && room.thermostats.includes(this._ui.thSel?.[room.id]) ? this._ui.thSel[room.id] : '';
+      const mixed = !sel && this._mixed(room, n);
+      const pending = this._stepTarget?.room === room.id && this._stepTarget.th === '';
+      const nn = sel ? this._thNow(room, n, sel) : mixed && !pending ? { ...n, mixed: targetsText(mixed, L) } : n;
+      const shown = nn.mixed ? null : this._shown(room, sel, nn);
+      const pick = multi ? `<div class="thsel" role="group" aria-label="${esc(t.pick_th)}">${['', ...room.thermostats].map((e) => {
+        const v = e ? this._shown(room, e, this._thNow(room, n, e)) : null;
+        return `<button class="${e === sel ? 'on' : ''}" data-a="th-sel" data-v="${esc(e)}" aria-pressed="${e === sel}">${esc(e ? this._thLabel(room, e) : t.all_th)}${typeof v === 'number' ? ` <span class="${this._thNow(room, n, e).manual ? 'manual' : 'dim'}">${esc(Number(v).toLocaleString(L === 'de' ? 'de-AT' : 'en-GB', { maximumFractionDigits: 1 }))}°</span>` : ''}</button>`;
+      }).join('')}</div>` : '';
+      ctrl = `${pick}<div class="dialbox">
+        <svg data-dial data-th="${esc(sel)}" viewBox="0 0 200 200" tabindex="0" role="slider" aria-label="${esc(nn.label || t.setpoint)}" aria-valuemin="${MIN_T}" aria-valuemax="${MAX_T}" aria-valuenow="${shown ?? ''}">${this._dialSvg(room, nn, shown)}</svg>
+        <div class="ctrl dialctrl"><button class="round" data-a="step" data-th="${esc(sel)}" data-v="-1" aria-label="${esc(t.colder)}">−</button><button class="round" data-a="step" data-th="${esc(sel)}" data-v="1" aria-label="${esc(t.warmer)}">+</button></div></div>`;
+    } else if (multi) {
+      // One slider per thermostat, then a row that moves all of them by the same amount.
+      ctrl = room.thermostats.map((e) => {
+        const nn = this._thNow(room, n, e);
+        const shown = this._shown(room, e, nn);
+        return `<div class="slider th1" data-slider data-th="${esc(e)}" tabindex="0" role="slider" aria-label="${esc(nn.label)}" aria-valuemin="${this._config.dial_min}" aria-valuemax="${this._config.dial_max}" aria-valuenow="${shown ?? ''}">${this._sliderHtml(room, nn, shown)}</div>`;
+      }).join('') + `<div class="allrow"><span><span class="block">${esc(t.both_th)}</span><span class="block dim small">${esc(t.both_help)}</span></span><span class="grow"></span>
+        <button class="round" data-a="step-all" data-v="-1" aria-label="${esc(`${t.both_th}: ${t.colder}`)}">−</button><button class="round" data-a="step-all" data-v="1" aria-label="${esc(`${t.both_th}: ${t.warmer}`)}">+</button></div>`;
+    } else {
+      const shown = this._shown(room, '', n);
+      ctrl = `<div class="slider" data-slider data-th="" tabindex="0" role="slider" aria-label="${esc(t.setpoint)}" aria-valuemin="${this._config.dial_min}" aria-valuemax="${this._config.dial_max}" aria-valuenow="${shown ?? ''}">${this._sliderHtml(room, n, shown)}</div>`;
+    }
     let next = '';
     if (n.at) {
       const name = this._planName(room, n.plan);
-      next = `<div class="pill"><span>${esc(name)}: ${esc(fmtTemp(n.at.period, this._lang))} ${esc(n.at.next ? `${t.until} ${fromMin(n.at.next.start)}` : `${t.until} ${t.tomorrow_l}`)}</span>
-        ${n.at.next ? `<span class="dim">${esc(t.then)} ${esc(fmtTemp(n.at.next, this._lang))}</span>` : ''}</div>`;
+      next = `<div class="pill"><span>${esc(name)}: ${esc(fmtTemp(n.at.period, L))} ${esc(n.at.next ? `${t.until} ${fromMin(n.at.next.start)}` : `${t.until} ${t.tomorrow_l}`)}</span>
+        ${n.at.next ? `<span class="dim">${esc(t.then)} ${esc(fmtTemp(n.at.next, L))}</span>` : ''}</div>`;
     }
-    const th = room.thermostats.length > 1 ? room.thermostats.map((e) => {
+    const th = multi && dial ? room.thermostats.map((e) => {
       const s = this._hass.states[e];
       if (!s) return `<div class="th dim">${esc(e)}</div>`;
-      const v = ['unavailable', 'unknown'].includes(s.state) ? t.unavailable : s.state === 'off' ? t.off : fmtTemp(s.attributes.temperature, this._lang);
-      return `<div class="th"><span>${esc(planLabel(s.attributes.friendly_name || e, room.name) || s.attributes.friendly_name)}</span><span class="dim">${fmtTemp(s.attributes.current_temperature, this._lang)} → ${esc(v)}</span></div>`;
+      const nn = this._thNow(room, n, e);
+      const v = ['unavailable', 'unknown'].includes(s.state) ? t.unavailable : s.state === 'off' ? t.off : fmtTemp(nn.target, L);
+      return `<div class="th"><span>${esc(nn.label)}</span><span class="dim">${fmtTemp(s.attributes.current_temperature, L)} → <span class="${nn.manual ? 'manual' : ''}">${esc(v)}</span></span></div>`;
     }).join('') : '';
-    return `${ctrl}${next}${th}
-      <div class="foot"><button class="link small" data-a="layout">${esc(this._layout === 'dial' ? t.layout_compact : t.layout_dial)}</button></div>`;
+    const back = n.manual && n.active && n.wanted != null && !n.windowOpen && !n.heatingOff && !n.exercise
+      ? `<div class="backrow"><span class="dim small grow">${esc(n.at?.next ? `${t.manual_until} ${fromMin(n.at.next.start)}${t.manual_then}` : '')}</span>
+        <button class="btn flat small outline" data-a="to-plan">${esc(t.to_plan)}</button></div>` : '';
+    return `${ctrl}${next}${th}${back}
+      <div class="foot"><button class="link small" data-a="layout">${esc(dial ? t.layout_compact : t.layout_dial)}</button></div>`;
   }
 
   /** Inside of the dial SVG for setpoint `v`: coloured scale, filled up to `v`, the handle, a tick for the
@@ -1311,11 +1441,11 @@ class WeekheatCard extends Base {
     }
     const off = v != null && v <= OFF_T;
     const { status, cls } = this._ctlStatus(n);
-    const big = v == null ? '–' : off ? t.off : Number(v).toLocaleString(this._lang === 'de' ? 'de-AT' : 'en-GB', { maximumFractionDigits: 1 });
+    const big = v == null ? (n.mixed || '–') : off ? t.off : Number(v).toLocaleString(this._lang === 'de' ? 'de-AT' : 'en-GB', { maximumFractionDigits: 1 });
     const cur = n.current != null ? `${t.current} ${fmtTemp(Math.round(n.current * 10) / 10, this._lang)}` : '';
     const heat = n.heating && cls !== 'heat' ? `<tspan class="heat"> · ${esc(t.heating)}</tspan>` : '';
     parts.push(`<text x="100" y="72" class="dstatus ${cls}">${esc(status)}${heat}</text>`,
-      `<text x="100" y="${off ? 112 : 116}" class="dbig${off ? ' off' : ''}">${esc(big)}${off || v == null ? '' : '<tspan class="dunit" dy="-17">°C</tspan>'}</text>`,
+      `<text x="100" y="${off ? 112 : n.mixed && v == null ? 110 : 116}" class="dbig${off ? ' off' : ''}${n.mixed && v == null ? ' mixed' : ''}">${esc(big)}${off || v == null ? '' : '<tspan class="dunit" dy="-17">°C</tspan>'}</text>`,
       `<text x="100" y="140" class="dsmall">${esc(cur)}</text>`);
     if (n.manual && n.active && n.wanted != null) parts.push(`<text x="100" y="156" class="dsmall">${esc(t.plan)} ${esc(fmtTemp(n.wanted, this._lang))}</text>`);
     return parts.join('');
@@ -1324,7 +1454,8 @@ class WeekheatCard extends Base {
   /** Status word and colour class above the setpoint (dial and slider). */
   _ctlStatus(n) {
     const t = this._t;
-    const status = !n.active ? t.paused : n.exercise ? t.exercise : n.heatingOff ? t.heating_off : n.windowOpen ? t.window_open : n.roomClosed ? t.rc_closed : n.manual ? t.manual : n.heating ? t.heating : t.scheduled;
+    const word = !n.active ? t.paused : n.exercise ? t.exercise : n.heatingOff ? t.heating_off : n.windowOpen ? t.window_open : n.roomClosed ? t.rc_closed : n.manual ? t.manual : n.heating ? t.heating : t.scheduled;
+    const status = n.label ? `${n.label} · ${word}` : word;
     const cls = !n.active ? 'dim' : n.exercise ? 'window' : n.heatingOff ? 'dim' : n.windowOpen ? 'window' : n.manual ? 'manual' : n.heating ? 'heat' : 'dim';
     return { status, cls };
   }
@@ -1667,6 +1798,7 @@ const STYLE = `
   .dstatus.manual { fill: var(--wh-manual) !important; }
   .dbig { font-size: 46px; font-weight: 300; }
   .dbig.off { font-size: 34px; }
+  .dbig.mixed { font-size: 30px; }
   .dunit { font-size: 15px; }
   .dsmall { font-size: 10.5px; }
   .ctrlbar { margin-top: 2px; }
@@ -1776,6 +1908,14 @@ const STYLE = `
   .entry { display: flex; align-items: center; gap: 8px; border: 1px solid var(--divider-color); border-radius: 8px; padding: 6px 4px 6px 10px; background: var(--card-background-color); }
   .entry ha-icon { color: var(--state-climate-heat-color, #ff8a50); flex: none; }
   .stepper { display: flex; align-items: center; gap: 8px; }
+  .thsel { display: flex; gap: 6px; margin: 10px 0 0; }
+  .thsel button { flex: 1; min-height: 40px; border: 1px solid var(--divider-color); background: none; color: var(--primary-text-color); border-radius: 20px; font: inherit; font-size: .92em; cursor: pointer; padding: 4px 6px; }
+  .thsel button.on { border: 2px solid var(--primary-color); background: color-mix(in srgb, var(--primary-color) 14%, transparent); font-weight: 500; }
+  .thsel .manual, .th .manual { color: var(--wh-manual); }
+  .slider.th1 { border: 1px solid var(--divider-color); border-radius: 8px; padding: 8px 10px 4px; }
+  .allrow { display: flex; align-items: center; gap: 8px; border: 1px dashed var(--divider-color); border-radius: 8px; padding: 8px 10px; margin: 6px 0; }
+  .backrow { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .btn.outline { border: 1px solid var(--primary-color); }
   .sval { min-width: 64px; text-align: center; font-weight: 500; }
   .ptitle { font-weight: 500; margin: 6px 0 4px; }
   .phead { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }

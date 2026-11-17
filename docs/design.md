@@ -325,6 +325,14 @@ titles (`Working day`, `Free day`) are read too. Writing uses `calendar.create_e
   the free-day plan.
 - **Days**: the next 14 days from the day script: date, working/free, reason, the plan each room will
   use; today and tomorrow highlighted. Tap a day to set an exception. Shared by all rooms.
+- **Several thermostats in a room** (e.g. a dining and a couch zone): each can be set on its own, as a
+  manual change that holds until the next period, like any other; the plan stays one per room (zones
+  that need their own plans are separate rooms). Dial layout: a selector *All · <thermostat> …* above
+  the one dial; *All* sets every thermostat to the same value and shows "18 / 22 °C" while they differ
+  (− / + start from their average). Compact layout: one slider per thermostat, plus an *All together*
+  row whose − / + shifts each by the same amount. The status line shows each value when they differ
+  ("Manual · 18 / 22 °C until 24:00"). *Back to plan* (shown while the room is manual) writes the
+  current period's temperature to all of them.
 - **Setup tab** of an opened room (admins only): the name, then one collapsible section each for the
   thermostats, the windows and doors (with the delay) and the room sensor (with the margin), each showing
   a summary while closed; pause and save. Entities are added with a search (name, entity id, area; the

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   toMin, fromMin, nowIn, addDays, blocksToPeriods, periodsToBlocks, checkPeriods, periodAt, slugify,
   planLabel, matchPlan, planForDay, parseException, exceptionTitle, reasonText, fmtTemp, STARTER,
-  roomFromInput, DIRECTORY_FIELDS, exerciseFromInput, pickKind, pickCandidates, count,
+  roomFromInput, DIRECTORY_FIELDS, exerciseFromInput, pickKind, pickCandidates, count, targetsText, clampT,
 } from '../weekheat-card.js';
 
 test('time', () => {
@@ -160,4 +160,13 @@ test('count picks singular or plural', () => {
   assert.equal(count(1, ['Regel', 'Regeln']), '1 Regel');
   assert.equal(count(0, ['Regel', 'Regeln']), '0 Regeln');
   assert.equal(count(3, ['Kontakt', 'Kontakte']), '3 Kontakte');
+});
+
+test('targetsText shows one value or each differing one', () => {
+  assert.equal(targetsText([20, 20], 'de'), '20 °C');
+  assert.equal(targetsText([18, 22.5], 'de'), '18 / 22,5 °C');
+  assert.equal(targetsText([18, null, 22], 'en'), '18 / 22 °C');
+  assert.equal(targetsText([], 'de'), '–');
+  assert.equal(clampT(31), 30);
+  assert.equal(clampT(4), 5);
 });

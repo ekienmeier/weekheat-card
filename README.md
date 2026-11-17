@@ -18,6 +18,8 @@ single setpoint.
   exercise) behind the gear.
 - An opened room shows its setpoint on a **dial** (drag the handle, use − / + or the arrow keys) or
   on a horizontal **slider** (drag or tap the bar, arrow keys), with the room temperature marked on both.
+  A room with several thermostats can set each one on its own (a selector above the dial, or one slider
+  each), until the next period; *Back to plan* ends a manual change at once.
 - **Windows and doors**: while a room's window or door sensor is open (for a delay, 30 s by default), its
   thermostats are set to 5 °C; when all are closed, the setpoints from before come back.
 - **Room sensor** (optional): while the room is a margin (0.5 °C by default) above the setpoint, its
@@ -31,7 +33,7 @@ single setpoint.
 Based on the idea and structure of [Temperate](https://github.com/xman2000/temperate-card) by Stephen
 (MIT), which does this for heat/cool thermostats with one day plan. Design: [docs/design.md](docs/design.md).
 
-Status: early (0.10). Tested with Aqara E1/W600 thermostats through HomeKit Controller on HA 2026.11.
+Status: early (0.11). Tested with Aqara E1/W600 thermostats through HomeKit Controller on HA 2026.11.
 
 ## Parts
 
@@ -97,7 +99,8 @@ also be added in Home Assistant's calendar view.
 - `tools/ha.py`: a small REST/WebSocket client (URL and token from `~/.config/weekheat/`).
 - `tools/deploy_blueprint.py`: save a blueprint from this repo to Home Assistant.
 - `tools/shoot.mjs`: screenshots of a dashboard with Playwright (card or whole page, dialogs included), with
-  the working copy of the card in place of the installed one.
+  the working copy of the card in place of the installed one. `nowrite` drops every service call the card
+  makes and `fake:<entity>=<setpoint>` shows a setpoint without writing it, for checks against a live HA.
 
 ## Versioning
 

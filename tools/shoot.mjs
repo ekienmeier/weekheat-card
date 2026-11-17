@@ -11,6 +11,8 @@
 //   size:<w>x<h>         viewport size
 //   page:<name>          screenshot of the visible page (dialogs included) as <name>.png
 //   key:<key>            press a key (e.g. Escape)
+//   nowrite              the card writes nothing to HA (its writes are dropped)
+//   fake:<entity>=<v>    the card sees setpoint <v> for <entity> (nothing is written)
 //   drag:<x>,<y>         drag the first dial's handle to (x, y) in dial coordinates (0..200)
 // Example: node shoot.mjs /weekheat-test/w shot:start 'click:[data-a=toggle]' shot:open
 import { chromium } from 'playwright';
@@ -86,6 +88,30 @@ for (const s of steps) {
   else if (cmd === 'size') { const [w, h] = arg.split('x').map(Number); await page.setViewportSize({ width: w, height: h }); }
   else if (cmd === 'page') await page.screenshot({ path: `${process.env.OUT}/${arg}.png` });
   else if (cmd === 'key') { await page.keyboard.press(arg); await page.waitForTimeout(500); }
+  else if (cmd === 'nowrite' || cmd === 'fake') {
+    // nowrite: every service call of the card is dropped (also via its own hass object).
+    // fake:<entity>=<setpoint>: the card sees this setpoint instead of the real one.
+    const k = arg.lastIndexOf('=');
+    const over = cmd === 'fake' ? [arg.slice(0, k), +arg.slice(k + 1)] : null;
+    await card.evaluate((el, [nowrite, over]) => {
+      if (nowrite) el.__nowrite = true;
+      if (over) el.__over = { ...(el.__over || {}), [over[0]]: over[1] };
+      if (!el.__wrapped) {
+        const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'hass');
+        Object.defineProperty(el, 'hass', { configurable: true, get() { return el._hass; }, set(h) {
+          el.__raw = h;
+          const states = { ...h.states };
+          for (const [id, t] of Object.entries(el.__over || {})) if (states[id]) states[id] = { ...states[id], attributes: { ...states[id].attributes, temperature: t } };
+          const block = el.__nowrite ? { callService: async (...a) => { console.warn('blocked', JSON.stringify(a)); } } : {};
+          desc.set.call(el, { ...h, states, ...block });
+        } });
+        el.__wrapped = true;
+        el.__raw = el._hass;
+      }
+      el.hass = el.__raw;
+    }, [cmd === 'nowrite', over]);
+    await page.waitForTimeout(400);
+  }
 }
 console.log(logs.join('\n') || 'no console errors');
 await browser.close();
