@@ -3,6 +3,13 @@
 Home Assistant heating plans: a Lovelace card (`weekheat-card.js`) and two blueprints (`blueprints/`).
 Design and decisions: `docs/design.md`. Tests: `npm test` (Node 22).
 
+## Coding guidelines
+
+All new and changed code follows `docs/coding-guidelines.md`. In short: an explanatory comment on every
+module, class, function, shared type and non-obvious variable; functions at most 15 lines of code
+(aim for 12), classes and modules at most 400, counted after formatting at 100 columns; layers as in
+section 1.4 there. Existing code is brought in line by the plan in `docs/review-2026-11-18.md`.
+
 ## Versioning
 
 Follow the *Versioning* section of `README.md`. In short: a new feature or visible change raises the
