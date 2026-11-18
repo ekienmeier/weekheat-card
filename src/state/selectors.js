@@ -7,6 +7,7 @@ import { exerciseFromInput } from '../domain/room.js';
 import { roomStatus } from '../domain/room-status.js';
 import { thermostatStatus, mixedTargets } from '../domain/thermostat-status.js';
 import { snap } from '../domain/dial.js';
+import { formattingOf } from '../domain/formatting.js';
 import { nowIn } from '../domain/time.js';
 import { languageOf, textsFor } from '../i18n/text.js';
 
@@ -17,6 +18,16 @@ import { languageOf, textsFor } from '../i18n/text.js';
  */
 export function lang(ctx) {
   return languageOf(ctx.gateway.hass);
+}
+
+/**
+ * How numbers and times are written: the user's Home Assistant settings.
+ * @param {import('./context.js').Context} ctx
+ * @returns {import('../domain/formatting.js').Formatting}
+ */
+export function formatting(ctx) {
+  const { hass } = ctx.gateway;
+  return formattingOf(hass.locale, hass.language || 'en');
 }
 
 /**

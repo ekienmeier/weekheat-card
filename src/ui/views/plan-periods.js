@@ -2,7 +2,7 @@
 // period chosen (start, temperature, Off, delete).
 
 import { html } from 'lit';
-import { formatPeriod } from '../../domain/format.js';
+import { formatPeriod, formatTime } from '../../domain/format.js';
 import { fromMin, toMin } from '../../domain/time.js';
 import {
   deletePeriod,
@@ -11,7 +11,7 @@ import {
   stepPeriod,
   togglePeriod,
 } from '../../state/actions/plan-editor.js';
-import { lang, texts } from '../../state/selectors.js';
+import { formatting, texts } from '../../state/selectors.js';
 
 /**
  * @typedef {object} PeriodList What the list shows.
@@ -31,8 +31,9 @@ import { lang, texts } from '../../state/selectors.js';
 function periodRow(ctx, list, index) {
   const period = list.periods[index];
   const now = list.current === period.start ? 'current' : '';
-  const inside = html`<span>${fromMin(period.start)}</span><span class="grow"></span>
-    <span>${formatPeriod(period, lang(ctx), texts(ctx))}</span>`;
+  const format = formatting(ctx);
+  const inside = html`<span>${formatTime(period.start, format)}</span><span class="grow"></span>
+    <span>${formatPeriod(period, format, texts(ctx))}</span>`;
   if (!ctx.store.data.admin) return html`<div class="period-row ${now}">${inside}</div>`;
   return html`<button class="period-row ${now}" @click=${() => togglePeriod(ctx, list.plan, index)}>
     ${inside}</button>`;
@@ -51,7 +52,7 @@ function temperatureStepper(ctx, list, index) {
   const button = (steps, word) => html`<button class="round small" ?disabled=${period.off}
     aria-label=${word} @click=${() => stepPeriod(ctx, list.plan, { index, steps })}>
     ${steps < 0 ? '−' : '+'}</button>`;
-  const value = period.off ? text.off : formatPeriod(period, lang(ctx), text);
+  const value = period.off ? text.off : formatPeriod(period, formatting(ctx), text);
   return html`<div class="temperature-step">
     ${button(-1, text.colder)}<span>${value}</span>${button(1, text.warmer)}</div>`;
 }

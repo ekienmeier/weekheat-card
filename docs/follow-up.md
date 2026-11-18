@@ -99,21 +99,6 @@ Each says what is wrong, where, a way to fix it, how to check it, and what it me
 - **Check.** A state test (first press asks, second acts, navigation clears); screenshots of both steps.
 - **Version.** Minor.
 
-### 3. L5: Home Assistant's number and time format
-
-- **Problem.** Numbers use `de-AT` or `en-GB` by the language (`numberLocale` in
-  `src/domain/format.js`); times are always 24-hour (`fromMin` in `src/domain/time.js`, used in
-  `src/ui/status.js`, `src/ui/views/control.js`, `plan-periods.js`, `chart.js`). The user's Home
-  Assistant settings are ignored.
-- **Approach.** Read `hass.locale` (`language`, `number_format`: language, system, comma_decimal,
-  decimal_comma, space_comma, none; `time_format`: language, system, 12, 24). Map them as Home
-  Assistant's own frontend does (comma_decimal → en-US, decimal_comma → de, space_comma → fr, system
-  → the browser's, language → the language). One `formatting(hass)` gives the number locale and
-  12/24 hours; `formatNumber`, `formatTemp` and a new `formatTime(minutes, …)` use it. Time inputs
-  keep the browser's format.
-- **Check.** Domain tests for each setting; screenshots unchanged with the owner's settings.
-- **Version.** Minor.
-
 ### 5. L12: a room's status is computed several times per render
 
 - **Problem.** `statusOf` (`src/state/selectors.js`) runs `roomStatus` on every call; one render of an

@@ -2,11 +2,10 @@
 // One table for both, so that they always agree (review M14).
 
 import { OFF_T } from '../domain/constants.js';
-import { formatPeriod, formatTemp, targetsText } from '../domain/format.js';
+import { formatPeriod, formatTemp, formatTime, targetsText } from '../domain/format.js';
 import { roomMode } from '../domain/room-status.js';
 import { thermostatStatus } from '../domain/thermostat-status.js';
-import { fromMin } from '../domain/time.js';
-import { lang, texts } from '../state/selectors.js';
+import { formatting, texts } from '../state/selectors.js';
 
 /**
  * Each mode's icon, its colour class (list and controls), and the text key of its word.
@@ -55,7 +54,8 @@ export function lookOf(status) {
  * @returns {string}
  */
 export function untilText(ctx, status) {
-  return status.at?.next ? ` ${texts(ctx).until} ${fromMin(status.at.next.start)}` : '';
+  const next = status.at?.next;
+  return next ? ` ${texts(ctx).until} ${formatTime(next.start, formatting(ctx))}` : '';
 }
 
 /**
@@ -66,13 +66,13 @@ export function untilText(ctx, status) {
  * @returns {string}
  */
 function targets(ctx, room, status) {
-  if (room.thermostats.length < 2) return formatTemp(status.target, lang(ctx));
+  if (room.thermostats.length < 2) return formatTemp(status.target, formatting(ctx));
   const each = room.thermostats.map((th) =>
     thermostatStatus(room, th, { status, states: ctx.gateway.states }),
   );
   return targetsText(
     each.map((item) => item.target),
-    lang(ctx),
+    formatting(ctx),
   );
 }
 
@@ -86,7 +86,7 @@ function targets(ctx, room, status) {
 export function statusLine(ctx, room, status) {
   const text = texts(ctx);
   const mode = roomMode(status);
-  const temp = (value) => formatTemp(value, lang(ctx));
+  const temp = (value) => formatTemp(value, formatting(ctx));
   const set = () => `${targets(ctx, room, status)}${untilText(ctx, status)}`;
   const lines = {
     paused: () => (status.target != null ? `${text.paused} · ${temp(status.target)}` : text.paused),
@@ -109,7 +109,7 @@ function scheduledLine(ctx, status) {
   if (!status.at) return '–';
   const text = texts(ctx);
   const until = untilText(ctx, status) || ` ${text.until} ${text.tomorrow_l}`;
-  return `${formatPeriod(status.at.period, lang(ctx), text)}${until}`;
+  return `${formatPeriod(status.at.period, formatting(ctx), text)}${until}`;
 }
 
 /**

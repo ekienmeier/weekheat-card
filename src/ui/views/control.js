@@ -2,14 +2,19 @@
 // sliders, the current period, each thermostat's values, and "Back to plan" after a change by hand.
 
 import { html, nothing } from 'lit';
-import { formatNumber, formatPeriod, formatTemp, targetsText } from '../../domain/format.js';
+import {
+  formatNumber,
+  formatPeriod,
+  formatTemp,
+  formatTime,
+  targetsText,
+} from '../../domain/format.js';
 import { canReturnToPlan } from '../../domain/room-status.js';
 import { thermostatStatus } from '../../domain/thermostat-status.js';
 import { UNAVAILABLE } from '../../domain/constants.js';
-import { fromMin } from '../../domain/time.js';
 import { backToPlan, shiftAll } from '../../state/actions/control.js';
 import { selectThermostat, toggleLayout } from '../../state/actions/navigation.js';
-import { lang, mixed, planName, shownValue, texts } from '../../state/selectors.js';
+import { formatting, mixed, planName, shownValue, texts } from '../../state/selectors.js';
 import { dialView } from './dial.js';
 import { sliderView } from './slider.js';
 
@@ -58,7 +63,8 @@ function choiceValue(ctx, room, of) {
   const value = shownValue(ctx, room, of.th);
   if (typeof value !== 'number') return nothing;
   const manual = statusOfThermostat(ctx, room, of).manual;
-  return html`<span class=${manual ? 'manual' : 'dim'}>${formatNumber(value, lang(ctx))}°</span>`;
+  const number = formatNumber(value, formatting(ctx));
+  return html`<span class=${manual ? 'manual' : 'dim'}>${number}°</span>`;
 }
 
 /**
@@ -79,7 +85,7 @@ function dialLayout(ctx, room, status) {
   const shown = {
     status: selected ? statusOfThermostat(ctx, room, { status, th: selected }) : status,
     value: values ? null : shownValue(ctx, room, selected),
-    mixed: values ? targetsText(values, lang(ctx)) : undefined,
+    mixed: values ? targetsText(values, formatting(ctx)) : undefined,
   };
   const choices = several ? selector(ctx, room, { status, selected }) : nothing;
   return html`${choices}${dialView(ctx, room, { ...shown, th: selected })}`;
@@ -140,8 +146,10 @@ function periodPill(ctx, room, status) {
   if (!status.at) return nothing;
   const text = texts(ctx);
   const { period, next } = status.at;
-  const show = (item) => formatPeriod(item, lang(ctx), text);
-  const until = next ? `${text.until} ${fromMin(next.start)}` : `${text.until} ${text.tomorrow_l}`;
+  const show = (item) => formatPeriod(item, formatting(ctx), text);
+  const until = next
+    ? `${text.until} ${formatTime(next.start, formatting(ctx))}`
+    : `${text.until} ${text.tomorrow_l}`;
   const now = `${planName(ctx, room, status.plan)}: ${show(period)} ${until}`;
   const then = next ? html`<span class="dim">${text.then} ${show(next)}</span>` : nothing;
   return html`<div class="pill"><span>${now}</span>${then}</div>`;
@@ -161,7 +169,7 @@ function thermostatList(ctx, room, status) {
     const each = statusOfThermostat(ctx, room, { status, th });
     const value = setpointText(ctx, state, each);
     const setpoint = html`<span class=${each.manual ? 'manual' : ''}>${value}</span>`;
-    const current = formatTemp(state.attributes.current_temperature, lang(ctx));
+    const current = formatTemp(state.attributes.current_temperature, formatting(ctx));
     return html`<div class="thermostat"><span>${each.label}</span>
       <span class="dim">${current} → ${setpoint}</span></div>`;
   };
@@ -178,7 +186,7 @@ function thermostatList(ctx, room, status) {
 function setpointText(ctx, state, each) {
   const text = texts(ctx);
   if (UNAVAILABLE.includes(state.state)) return text.unavailable;
-  return state.state === 'off' ? text.off : formatTemp(each.target, lang(ctx));
+  return state.state === 'off' ? text.off : formatTemp(each.target, formatting(ctx));
 }
 
 /**
@@ -192,7 +200,9 @@ function backRow(ctx, room, status) {
   if (!canReturnToPlan(status) || status.wanted == null) return nothing;
   const text = texts(ctx);
   const next = status.at?.next;
-  const holds = next ? `${text.manual_until} ${fromMin(next.start)}${text.manual_then}` : '';
+  const holds = next
+    ? `${text.manual_until} ${formatTime(next.start, formatting(ctx))}${text.manual_then}`
+    : '';
   return html`<div class="back-row"><span class="dim small grow">${holds}</span>
     <button class="btn flat small outline" @click=${() => backToPlan(ctx, room)}>
       ${text.to_plan}</button></div>`;

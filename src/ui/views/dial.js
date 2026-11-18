@@ -8,7 +8,7 @@ import { DIAL, dialAngle, dialArc, dialPoint } from '../../domain/dial.js';
 import { formatNumber, formatTemp } from '../../domain/format.js';
 import { canReturnToPlan } from '../../domain/room-status.js';
 import { stepTarget } from '../../state/actions/control.js';
-import { lang, scale, texts } from '../../state/selectors.js';
+import { formatting, scale, texts } from '../../state/selectors.js';
 import { dialHandlers } from '../pointer.js';
 import { controlWord } from '../status.js';
 
@@ -74,7 +74,7 @@ function handle(ctx, value) {
 function planDot(ctx, status) {
   if (!canReturnToPlan(status) || status.wanted == null) return nothing;
   const [x, y] = at(angleOf(ctx, status.wanted), DIAL.radius - 17);
-  const title = `${texts(ctx).plan} ${formatTemp(status.wanted, lang(ctx))}`;
+  const title = `${texts(ctx).plan} ${formatTemp(status.wanted, formatting(ctx))}`;
   return svg`<circle cx=${x} cy=${y} r="3" class="dial-plan"><title>${title}</title></circle>`;
 }
 
@@ -99,7 +99,7 @@ function roomTick(ctx, status) {
  */
 export function smallLines(ctx, status) {
   const text = texts(ctx);
-  const temp = (value) => formatTemp(value, lang(ctx));
+  const temp = (value) => formatTemp(value, formatting(ctx));
   const room =
     status.current != null ? `${text.current} ${temp(Math.round(status.current * 10) / 10)}` : '';
   const differs = canReturnToPlan(status) && status.wanted != null;
@@ -136,7 +136,7 @@ function bigValue(ctx, { value, mixed }) {
   if (value <= OFF_T)
     return svg`<text x="100" y="112" class="dial-value off">${texts(ctx).off}</text>`;
   const unit = svg`<tspan class="dial-unit" dy="-17">°C</tspan>`;
-  const number = formatNumber(value, lang(ctx));
+  const number = formatNumber(value, formatting(ctx));
   return svg`<text x="100" y="116" class="dial-value">${number}${unit}</text>`;
 }
 
@@ -148,7 +148,7 @@ function bigValue(ctx, { value, mixed }) {
  */
 export function valueText(ctx, { value, mixed }) {
   if (value == null) return mixed || '–';
-  return value <= OFF_T ? texts(ctx).off : formatTemp(value, lang(ctx));
+  return value <= OFF_T ? texts(ctx).off : formatTemp(value, formatting(ctx));
 }
 
 /**

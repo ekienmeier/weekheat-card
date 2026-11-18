@@ -129,7 +129,9 @@ Which plan a room uses on a date:
   gives a plan of that name (`schedule.weekheat_<room>_<slug>`, which still holds after a rename); or,
   only if exactly one plan does, its entity id or name ends with it (e.g. after the room was
   renamed). So "Werktag" never picks "Kurzer Werktag" (fixed in 0.12.1). The card (`matchPlan`) and
-  the room blueprint (`plan_hits`, `named_plan`) have the same rule.
+  the room blueprint (`plan_hits`, `named_plan`) have the same rule. The slug is Home Assistant's
+  `slugify` (the card's copy spells ß, ø, æ, œ, ł, đ, þ the same way; only letters of other scripts,
+  such as Greek or Cyrillic, differ).
 
 Example, home office mostly on Fridays: either the week assigns Fri → Home office and an office Friday
 gets an exception naming the Weekday plan, or the week keeps Fri → Weekday and a (recurring)
@@ -400,7 +402,10 @@ titles (`Working day`, `Free day`) are read too. Writing uses `calendar.create_e
 - **Setup**: "Add room" asks for a name and thermostats (found with the same search as a room's
   Setup tab), then creates the starter plans, the state helper, the heating switch and the automation,
   paused. If a step fails, what was made is deleted again.
-- **Language**: German and English, by the HA user's language.
+- **Language**: German and English, by the HA user's language. Numbers and times follow the user's
+  Home Assistant profile (`hass.locale`: number format and time format), mapped to locales as Home
+  Assistant's own frontend does (`src/domain/formatting.js`); a 12-hour clock writes "6:30 AM".
+  Time inputs keep the browser's format, and dates still follow the card's language.
 - **Banners**: HA was down (above), a state helper too short (see *State helper*), the day script
   missing, blueprints older than the card (with *Update now*), and why the card could not load.
 

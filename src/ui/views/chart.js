@@ -3,10 +3,9 @@
 
 import { html, nothing } from 'lit';
 import { DAY_MINUTES } from '../../domain/constants.js';
-import { formatNumber, formatPeriod, tempColor } from '../../domain/format.js';
-import { fromMin } from '../../domain/time.js';
+import { formatNumber, formatPeriod, formatTime, tempColor } from '../../domain/format.js';
 import { togglePeriod } from '../../state/actions/plan-editor.js';
-import { lang, texts } from '../../state/selectors.js';
+import { formatting, texts } from '../../state/selectors.js';
 
 /** The temperatures at the bottom and the top of the chart, in °C. */
 const RANGE = { low: 10, high: 26 };
@@ -41,7 +40,7 @@ function barHeight(period) {
  */
 function bar(ctx, period, width) {
   const gap = period.temperature == null && !period.off;
-  const value = period.off ? texts(ctx).off : formatNumber(period.temperature, lang(ctx));
+  const value = period.off ? texts(ctx).off : formatNumber(period.temperature, formatting(ctx));
   const color = period.off || gap ? '' : `background:${tempColor(period.temperature)}`;
   const style = `height:${barHeight(period)}%;${color}`;
   return html`<div class="chart-bar" style=${style}>${width > 6 && !gap ? value : ''}</div>`;
@@ -63,7 +62,8 @@ function segment(ctx, chart, index) {
   const style = `left:${(period.start / DAY_MINUTES) * 100}%;width:${width}%`;
   const inside = bar(ctx, period, width);
   if (!ctx.store.data.admin) return html`<div class=${classes} style=${style}>${inside}</div>`;
-  const name = `${fromMin(period.start)} ${formatPeriod(period, lang(ctx), texts(ctx))}`;
+  const format = formatting(ctx);
+  const name = `${formatTime(period.start, format)} ${formatPeriod(period, format, texts(ctx))}`;
   return html`<button class=${classes} style=${style} aria-label=${name}
     @click=${() => togglePeriod(ctx, chart.plan, index)}>${inside}</button>`;
 }
