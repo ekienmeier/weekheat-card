@@ -83,8 +83,9 @@ fields:
         max: 62
         mode: box
 
+# Several rooms call it at the same moment (at every 15-minute tick), so it may run in parallel.
 mode: parallel
-max: 20
+max: 50
 
 variables:
   workday: !input workday
@@ -92,92 +93,153 @@ variables:
   holidays: !input holidays
   calendars: !input calendars
   rules: !input rules
+  # Exception titles (ignoring case) that make a day a working day or a free day. The card has the
+  # same lists (src/domain/exceptions.js); tests/consistency.test.mjs checks that they match.
+  working_words:
+    - werktag
+    - working day
+    - arbeitstag
+  free_words:
+    - freier tag
+    - free day
+    - wochenende
+    - weekend
+  # The weekday keys, Monday first, as the room automations' weeks use them.
+  weekdays:
+    - mon
+    - tue
+    - wed
+    - thu
+    - fri
+    - sat
+    - sun
+  # The working weekdays when the Workday sensor cannot say.
+  usual_workdays:
+    - mon
+    - tue
+    - wed
+    - thu
+    - fri
+  # The most days one call answers for.
+  max_days: 62
 
 sequence:
+  # The dates asked for, and the calendars to read: the keyword calendars, the exceptions and the
+  # holiday calendar, without those that have no state (a calendar not loaded must not stop the
+  # script; with none left, only the weekdays decide).
   - variables:
       first: "{{ start if start is defined and start else now().date() | string }}"
-      count: "{{ [[(days | int(1)) if days is defined else 1, 1] | max, 62] | min }}"
+      count: "{{ [[(days | int(1)) if days is defined else 1, 1] | max, max_days] | min }}"
       dates: >-
-        {% set d0 = strptime(first, '%Y-%m-%d') %}{% set ns = namespace(l=[]) %}
-        {% for i in range(count) %}{% set ns.l = ns.l + [(d0 + timedelta(days=i)).date() | string] %}{% endfor %}
-        {{ ns.l }}
+        {%- set day0 = strptime(first, '%Y-%m-%d') -%}
+        {%- set ns = namespace(dates=[]) -%}
+        {%- for i in range(count) -%}
+          {%- set ns.dates = ns.dates + [(day0 + timedelta(days=i)).date() | string] -%}
+        {%- endfor -%}
+        {{ ns.dates }}
       keyword_calendars: "{{ [calendars] if calendars is string else calendars | list }}"
-      sources: >-
-        {{ (keyword_calendars + [exceptions] + ([holidays] if holidays else [])) | reject('eq', '') | unique | list }}
+      wanted_calendars: "{{ keyword_calendars + [exceptions] + ([holidays] if holidays else []) }}"
+      sources: "{{ wanted_calendars | reject('eq', '') | unique | select('has_value') | list }}"
       until: "{{ (strptime(dates[-1], '%Y-%m-%d') + timedelta(days=1)).date() | string }}"
       out: []
+  # Read all events of the range at once. If that fails, the days are decided without calendars.
   - action: calendar.get_events
+    continue_on_error: true
     target:
-      entity_id: "{{ sources }}"
+      entity_id: "{{ sources or [exceptions] }}"
     data:
       start_date_time: "{{ first }} 00:00:00"
       end_date_time: "{{ until }} 00:00:00"
     response_variable: events
+  # Each event's first and last day, by calendar. An all-day event's end is the day after its last;
+  # an event with a time lasts until its end time, so one ending at midnight ends the day before.
+  - variables:
+      spans: >-
+        {%- set ns = namespace(by={}, list=[]) -%}
+        {%- for calendar, answer in (events if events is defined else {}).items() -%}
+          {%- set ns.list = [] -%}
+          {%- for event in answer.get('events', []) -%}
+            {%- set from, to = event.start | string, event.end | string -%}
+            {%- set all_day = from | length == 10 -%}
+            {%- set first_day = from if all_day else as_local(as_datetime(from)).date() | string -%}
+            {%- set end = strptime(to, '%Y-%m-%d') if all_day else as_local(as_datetime(to)) -%}
+            {%- set last_day = (end - timedelta(days=1 if all_day else 0, seconds=0 if all_day else 1)).date() | string -%}
+            {%- set ns.list = ns.list + [{'summary': event.summary, 'first': first_day, 'last': last_day}] -%}
+          {%- endfor -%}
+          {%- set ns.by = dict(ns.by, **{calendar: ns.list}) -%}
+        {%- endfor -%}
+        {{ ns.by }}
   - repeat:
       for_each: "{{ dates }}"
       sequence:
+        # Whether Workday counts the date as a workday. If it cannot say, the weekday decides.
+        - variables:
+            wd: {}
         - action: workday.check_date
+          continue_on_error: true
           target:
             entity_id: !input workday
           data:
             check_date: "{{ repeat.item }}"
           response_variable: wd
+        # The date, its weekday, and the events of each calendar on it.
         - variables:
-            out: >-
-              {%- macro covers(e, d) -%}
-                {%- set s = e.start | string -%}{%- set en = e.end | string -%}
-                {%- if s | length == 10 -%}{{ 'y' if s <= d < en else '' }}
-                {%- else -%}
-                  {%- set sd = (as_local(as_datetime(s)).date() | string) -%}
-                  {%- set ed = as_local(as_datetime(en)) -%}{%- set edd = ed.date() | string -%}
-                  {{ 'y' if sd <= d and (edd > d or (edd == d and (ed.time() | string) != '00:00:00')) else '' }}
-                {%- endif -%}
-              {%- endmacro -%}
-              {%- set d = repeat.item -%}
-              {%- set wkey = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'][strptime(d, '%Y-%m-%d').weekday()] -%}
-              {%- set workdays = state_attr(workday, 'workdays') or ['mon', 'tue', 'wed', 'thu', 'fri'] -%}
-              {%- set is_workday = wd[workday].workday -%}
+            day: "{{ repeat.item }}"
+            wkey: "{{ weekdays[strptime(repeat.item, '%Y-%m-%d').weekday()] }}"
+            workdays: "{{ state_attr(workday, 'workdays') or usual_workdays }}"
+            is_workday: "{{ wd[workday].workday if wd[workday] is defined else wkey in workdays }}"
+            on_day: >-
+              {%- set ns = namespace(by={}) -%}
+              {%- for calendar, list in spans.items() -%}
+                {%- set today = list | selectattr('first', 'le', day) | selectattr('last', 'ge', day) | list -%}
+                {%- set ns.by = dict(ns.by, **{calendar: today}) -%}
+              {%- endfor -%}
+              {{ ns.by }}
+        # 1. An exception: the first event in the exceptions calendar whose title is one.
+        - variables:
+            by_exception: >-
               {%- set ns = namespace(r=none) -%}
-              {#- 1. exception -#}
-              {%- for e in events.get(exceptions, {}).get('events', []) if ns.r is none and covers(e, d) -%}
-                {%- set title = e.summary | trim -%}
+              {%- for event in on_day.get(exceptions, []) if ns.r is none -%}
+                {%- set title = event.summary | trim -%}
                 {%- set parts = title | regex_findall('^(.*?)(?:\s+[–-]\s+(.*))?$') -%}
                 {%- set base = parts[0][0] | trim if parts else title -%}
                 {%- set note = (parts[0][1] | trim if parts else '') or none -%}
                 {%- set low = base | lower -%}
-                {%- if low in ['werktag', 'working day', 'arbeitstag'] -%}
-                  {%- set ns.r = {'free': false, 'plan': none, 'kind': 'exception', 'detail': base, 'note': note} -%}
-                {%- elif low in ['freier tag', 'free day', 'wochenende', 'weekend'] -%}
-                  {%- set ns.r = {'free': true, 'plan': none, 'kind': 'exception', 'detail': base, 'note': note} -%}
-                {%- elif low.startswith('plan:') -%}
-                  {%- set ns.r = {'free': false, 'plan': base[5:] | trim, 'kind': 'exception', 'detail': base, 'note': note} -%}
+                {%- set named = low.startswith('plan:') -%}
+                {%- if low in working_words or low in free_words or named -%}
+                  {%- set plan = base[5:] | trim if named else none -%}
+                  {%- set ns.r = {'free': low in free_words, 'plan': plan, 'kind': 'exception',
+                                  'detail': base, 'note': note} -%}
                 {%- endif -%}
               {%- endfor -%}
-              {#- 2. weekend day -#}
-              {%- if ns.r is none and wkey not in workdays -%}
-                {%- set ns.r = {'free': true, 'plan': none, 'kind': 'weekend', 'detail': wkey} -%}
-              {%- endif -%}
-              {#- 3. public holiday -#}
-              {%- if ns.r is none and not is_workday -%}
-                {%- set hs = namespace(name=none) -%}
-                {%- for e in events.get(holidays, {}).get('events', []) if hs.name is none and covers(e, d) -%}
-                  {%- set hs.name = e.summary -%}
-                {%- endfor -%}
-                {%- set ns.r = {'free': true, 'plan': none, 'kind': 'holiday', 'detail': hs.name} -%}
-              {%- endif -%}
-              {#- 4. calendar keyword -#}
+              {{ ns.r }}
+        # 2. A weekend day, 3. a public holiday (named from the holiday calendar), 4. a keyword rule:
+        # the first rule whose keyword is in the title of an event in a keyword calendar.
+        - variables:
+            by_weekend: "{{ {'free': true, 'plan': none, 'kind': 'weekend', 'detail': wkey} if wkey not in workdays else none }}"
+            by_holiday: >-
+              {%- set named = on_day.get(holidays, []) | map(attribute='summary') | list -%}
+              {{ {'free': true, 'plan': none, 'kind': 'holiday', 'detail': named[0] if named else none} if not is_workday else none }}
+            by_keyword: >-
+              {%- set ns = namespace(r=none) -%}
               {%- for rule in rules if ns.r is none -%}
                 {%- set kw = (rule if rule is string else rule.get('keyword', '')) | string | trim | lower -%}
                 {%- set plan = none if rule is string else ((rule.get('plan') or '') | string | trim or none) -%}
-                {%- for cal in keyword_calendars if ns.r is none and kw -%}
-                  {%- for e in events.get(cal, {}).get('events', []) if ns.r is none and kw in (e.summary | lower) and covers(e, d) -%}
-                    {%- set ns.r = {'free': plan is none, 'plan': plan, 'kind': 'calendar', 'detail': e.summary,
-                                    'source': state_attr(cal, 'friendly_name') or cal, 'keyword': kw} -%}
+                {%- for calendar in keyword_calendars if ns.r is none and kw -%}
+                  {%- for event in on_day.get(calendar, []) if ns.r is none and kw in (event.summary | lower) -%}
+                    {%- set source = state_attr(calendar, 'friendly_name') or calendar -%}
+                    {%- set ns.r = {'free': plan is none, 'plan': plan, 'kind': 'calendar',
+                                    'detail': event.summary, 'source': source, 'keyword': kw} -%}
                   {%- endfor -%}
                 {%- endfor -%}
               {%- endfor -%}
-              {%- set r = ns.r or {'free': false, 'plan': none, 'kind': 'plain', 'detail': none} -%}
-              {{ out + [dict({'date': d, 'weekday': wkey}, **r)] }}
+              {{ ns.r }}
+        # The first rule that applies wins; otherwise a working day.
+        - variables:
+            out: >-
+              {%- set plain = {'free': false, 'plan': none, 'kind': 'plain', 'detail': none} -%}
+              {%- set r = by_exception or by_weekend or by_holiday or by_keyword or plain -%}
+              {{ out + [dict({'date': day, 'weekday': wkey}, **r)] }}
   - variables:
       result: "{{ {'days': out} }}"
   - stop: Done

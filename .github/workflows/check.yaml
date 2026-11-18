@@ -10,8 +10,8 @@ jobs:
   card:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -23,7 +23,7 @@ jobs:
   style:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: pipx run yamllint==1.35.1 --strict blueprints .github .yamllint.yaml
       - run: pipx run ruff==0.8.0 check tools
       - run: pipx run ruff==0.8.0 format --check tools
@@ -31,6 +31,9 @@ jobs:
   hacs:
     runs-on: ubuntu-latest
     steps:
+      # The repository's description, topics and README images are GitHub settings that only the
+      # default HACS store needs; Weekheat is installed as a custom repository.
       - uses: hacs/action@main
         with:
           category: plugin
+          ignore: description topics images

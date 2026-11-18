@@ -87,6 +87,13 @@ event on a Saturday or a holiday changes nothing.
 Cost: one `calendar.get_events` call over all calendars for the whole range, plus one
 `workday.check_date` per date. Both are local reads (HA fetches CalDAV in the background).
 
+**When a source fails** (since 0.13): calendars without a state are left out of the call; if reading
+the events fails anyway, the days are decided without calendars; if `workday.check_date` fails, the
+weekday decides (the Workday sensor's workdays, else Monday to Friday). The script answers in any
+case, so the rooms keep working. In the room automation, a failing day script makes today a working
+day by its weekday (Saturday and Sunday free), so that windows, the heating switch and the room
+sensor still work.
+
 Verified on HA 2026.11.1: `workday.check_date` returns `{workday: bool}` for any date (2026-12-08
 false); `calendar.get_events` with `return_response` returns `start`, `end`, `summary` per event for
 several calendars at once; the Holiday calendar names the next holiday ("Mariä Empfängnis").
@@ -188,6 +195,22 @@ Consequences:
 - Home Assistant start.
 - A window or door sensor open for the window delay, or closed again.
 - Manual run (`automation.trigger`), used by the card after an exception for today or the week changed.
+
+### Run modes
+
+Each run, after the valve exercise, decides one mode; the first that applies wins:
+
+| Mode | When | What it does |
+|---|---|---|
+| off | the heating switch is off | forgets a held window or valve state, writes `off_temp` like a plan value |
+| open | a window has been open for the delay, nothing saved yet | saves the setpoints in `_open`, writes `off_temp` |
+| hold | a window is still open | writes nothing; a new period's temperature replaces the saved value |
+| rc | setpoints are saved and the room sensor has a value | valves held closed (`_rc`): released when the room is down to the highest saved setpoint (gives them back), else kept at `off_temp`; a new period or a setpoint by hand (`by_hand_from` or more) replaces the saved value |
+| restore | setpoints are saved, all windows closed, no room sensor value | writes the saved setpoints back |
+| plan | otherwise | writes the plan's temperature where it changed; then, with a room sensor, *close*: if the room is the margin above the highest setpoint, saves them in `_open` with `_rc` and writes `off_temp` |
+
+The thresholds are named variables at the top of the blueprint (`off_temp`, `same_setpoint`,
+`same_wanted`, `by_hand_from`, …); the card has the same constants, and a test checks that they match.
 
 ### Writes and failures
 

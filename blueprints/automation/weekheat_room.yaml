@@ -50,13 +50,48 @@ blueprint:
       selector:
         object:
           fields:
-            mon: {label: Monday, selector: {entity: {filter: [{domain: schedule}]}}}
-            tue: {label: Tuesday, selector: {entity: {filter: [{domain: schedule}]}}}
-            wed: {label: Wednesday, selector: {entity: {filter: [{domain: schedule}]}}}
-            thu: {label: Thursday, selector: {entity: {filter: [{domain: schedule}]}}}
-            fri: {label: Friday, selector: {entity: {filter: [{domain: schedule}]}}}
-            sat: {label: Saturday (only if made a working day), selector: {entity: {filter: [{domain: schedule}]}}}
-            sun: {label: Sunday (only if made a working day), selector: {entity: {filter: [{domain: schedule}]}}}
+            mon:
+              label: Monday
+              selector:
+                entity:
+                  filter:
+                    - domain: schedule
+            tue:
+              label: Tuesday
+              selector:
+                entity:
+                  filter:
+                    - domain: schedule
+            wed:
+              label: Wednesday
+              selector:
+                entity:
+                  filter:
+                    - domain: schedule
+            thu:
+              label: Thursday
+              selector:
+                entity:
+                  filter:
+                    - domain: schedule
+            fri:
+              label: Friday
+              selector:
+                entity:
+                  filter:
+                    - domain: schedule
+            sat:
+              label: Saturday (only if made a working day)
+              selector:
+                entity:
+                  filter:
+                    - domain: schedule
+            sun:
+              label: Sunday (only if made a working day)
+              selector:
+                entity:
+                  filter:
+                    - domain: schedule
     free_day:
       name: Free-day plan
       selector:
@@ -209,6 +244,47 @@ variables:
   # The most characters the state helper holds (its max, at most 255). A longer state is not saved
   # but reported, see the end.
   state_max: "{{ state_attr(state_entity, 'max') | int(255) }}"
+  # Fixed values. The card has the same (src/domain/constants.js); tests/consistency.test.mjs checks
+  # that they match.
+  # The setpoint of Off, of an open window, of the heating switched off and of closed valves, in °C.
+  off_temp: 5
+  # Two setpoints closer than this are the same (a thermostat rounds what it is sent), in °C.
+  same_setpoint: 0.25
+  # Two wanted temperatures closer than this are unchanged, in °C.
+  same_wanted: 0.05
+  # A setpoint above this is more than off_temp, in °C.
+  above_off: "{{ off_temp + same_wanted }}"
+  # While the valves are held closed, a setpoint set by hand counts from this on, in °C; a lower one
+  # is a nudge from the off_temp the thermostat shows, and is undone.
+  by_hand_from: 10
+  # The valve exercise's setpoints: fully open and fully closed, in °C.
+  exercise_open: 30
+  exercise_closed: 5
+  # What a thermostat without a setpoint reads as, so that it differs from any setpoint.
+  no_setpoint: -100
+  # A window trigger can come a moment before its delay has passed, in seconds.
+  window_slack: 1
+  # Rounding allowance when the room temperature is compared with setpoint and margin, in °C.
+  float_slack: 0.001
+  # The weekday keys, Monday first, as the week uses them.
+  weekdays:
+    - mon
+    - tue
+    - wed
+    - thu
+    - fri
+    - sat
+    - sun
+  # The inputs, normalised once: lists are lists, and an optional entity is '' or its entity id.
+  th_list: "{{ [thermostats] if thermostats is string else thermostats | list }}"
+  win_list: "{{ [windows] if windows is string else (windows or []) | list }}"
+  plan_list: "{{ [plans] if plans is string else plans | list }}"
+  sensor_id: >-
+    {%- set sensor = room_sensor[0] if room_sensor is list and room_sensor else room_sensor -%}
+    {{ sensor if sensor is string else '' }}
+  switch_id: >-
+    {%- set switch = heating_switch[0] if heating_switch is list and heating_switch else heating_switch -%}
+    {{ switch if switch is string else '' }}
 
 triggers:
   - trigger: state
@@ -239,7 +315,9 @@ triggers:
     id: window
   - trigger: state
     entity_id: !input heating_switch
-    to: ["on", "off"]
+    to:
+      - "on"
+      - "off"
     id: switch
   - trigger: time
     at: !input exercise_time
@@ -250,7 +328,7 @@ triggers:
     id: exercise_now
   - trigger: state
     entity_id: !input room_sensor
-    to: ~
+    to:
     id: room
   # A setpoint changed (by hand or by Weekheat): only matters while the room sensor holds the valves closed.
   - trigger: state
@@ -259,10 +337,12 @@ triggers:
     id: setpoint
 
 actions:
+  # A setpoint change only matters while the room sensor holds the valves closed, and only above
+  # off_temp (its own writes of off_temp are not by hand).
   - condition: template
     value_template: >-
       {{ trigger.id != 'setpoint' or ('"_rc"' in states(state_entity)
-         and (trigger.to_state.attributes.temperature | float(0)) > 5.05) }}
+         and (trigger.to_state.attributes.temperature | float(0)) > above_off) }}
   # Valve exercise: open fully, close fully, twice; then the setpoints from before. Runs first, so the
   # normal run below sees what it restored and writes a new period's temperature if one began meanwhile.
   - if:
@@ -270,13 +350,13 @@ actions:
         value_template: >-
           {%- set want = (trigger.event.data.entity_id | default([])) if trigger.id == 'exercise_now' else [] -%}
           {%- set want = [want] if want is string else want | list -%}
-          {{ (trigger.id == 'exercise' and exercise_day == ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'][now().weekday()])
+          {{ (trigger.id == 'exercise' and exercise_day == weekdays[now().weekday()])
              or (trigger.id == 'exercise_now' and (not want or this.entity_id in want)) }}
     then:
       - variables:
           ex_list: >-
             {%- set ns = namespace(l=[]) -%}
-            {%- for th in ([thermostats] if thermostats is string else thermostats | list) -%}
+            {%- for th in th_list -%}
               {%- set t = state_attr(th, 'temperature') -%}
               {%- if states(th) not in ['unavailable', 'unknown'] -%}
                 {%- set ns.l = ns.l + [[th, t | float if t is number else none, states(th)]] -%}
@@ -317,7 +397,7 @@ actions:
               target:
                 entity_id: "{{ ex_th }}"
               data:
-                temperature: 30
+                temperature: "{{ exercise_open }}"
             - delay:
                 seconds: "{{ exercise_wait | int(60) }}"
             - action: climate.set_temperature
@@ -325,7 +405,7 @@ actions:
               target:
                 entity_id: "{{ ex_th }}"
               data:
-                temperature: 5
+                temperature: "{{ exercise_closed }}"
             - delay:
                 seconds: "{{ exercise_wait | int(60) }}"
       - repeat:
@@ -354,7 +434,9 @@ actions:
       - wait_template: >-
           {%- set ns = namespace(ok=true) -%}
           {%- for it in ex_list if it[1] is number -%}
-            {%- if (state_attr(it[0], 'temperature') | float(-100) - it[1]) | abs >= 0.25 -%}{%- set ns.ok = false -%}{%- endif -%}
+            {%- if (state_attr(it[0], 'temperature') | float(no_setpoint) - it[1]) | abs >= same_setpoint -%}
+              {%- set ns.ok = false -%}
+            {%- endif -%}
           {%- endfor -%}
           {{ ns.ok }}
         timeout:
@@ -366,11 +448,18 @@ actions:
         data:
           value: "{{ ex_state | to_json }}"
 
+  # Today's day decision. If the day script fails, the weekday alone decides (Saturday and Sunday
+  # free), so that windows, the heating switch and the room sensor still work.
   - action: "{{ day_script }}"
+    continue_on_error: true
     response_variable: day_info
+  # Today's plan and the setpoint it wants, what was applied, and the inputs' states now.
   - variables:
-      day: "{{ day_info.days[0] }}"
-      plan_list: "{{ [plans] if plans is string else plans | list }}"
+      day: >-
+        {%- set wkey = weekdays[now().weekday()] -%}
+        {%- set fallback = {'weekday': wkey, 'free': wkey in weekdays[5:], 'plan': none} -%}
+        {%- set answered = day_info is defined and day_info.days is defined and day_info.days -%}
+        {{ day_info.days[0] if answered else fallback }}
       # The room's plans that the day's plan name (from an exception or a keyword rule) matches, in
       # three lists: same name without the room name (compared as slugs), the entity id the card
       # gives a plan of that name, and the entity id or name ends with it. Same rule as matchPlan
@@ -413,27 +502,23 @@ actions:
         {{ ns.d }}
       late: []
       targets: []
-      th_list: "{{ [thermostats] if thermostats is string else thermostats | list }}"
-      win_list: "{{ [windows] if windows is string else (windows or []) | list }}"
       # A window counts as open once it has been open for the delay.
       open_now: >-
         {%- set ns = namespace(o=false) -%}
         {%- for w in win_list if is_state(w, 'on') -%}
-          {%- if (now() - states[w].last_changed).total_seconds() >= (window_delay | float(0)) - 1 -%}{%- set ns.o = true -%}{%- endif -%}
+          {%- if (now() - states[w].last_changed).total_seconds() >= (window_delay | float(0)) - window_slack -%}
+            {%- set ns.o = true -%}
+          {%- endif -%}
         {%- endfor -%}
         {{ ns.o }}
       saved: "{{ applied.get('_open') }}"
       # Room sensor: its value, or none (no sensor, or no number right now).
-      room_t: >-
-        {%- set s = room_sensor[0] if room_sensor is list and room_sensor else room_sensor -%}
-        {{ states(s) | float if s is string and s != '' and is_number(states(s)) else none }}
+      room_t: "{{ states(sensor_id) | float if sensor_id and is_number(states(sensor_id)) else none }}"
       rc_held: "{{ saved is list and applied.get('_rc') is not none }}"
       now_m: "{{ (now().timestamp() // 60) | int }}"
       rc_free: >-
         {{ applied.get('_rt') is not number or now_m - applied.get('_rt') >= room_hold | float(10) }}
-      switch_off: >-
-        {%- set sw = heating_switch[0] if heating_switch is list and heating_switch else heating_switch -%}
-        {{ sw is string and sw != '' and is_state(sw, 'off') }}
+      switch_off: "{{ switch_id != '' and is_state(switch_id, 'off') }}"
       mode: >-
         {%- if switch_off -%}off
         {%- elif open_now -%}{{ 'hold' if saved is list else 'open' }}
@@ -453,7 +538,9 @@ actions:
             {%- for th in th_list -%}
               {%- set t = state_attr(th, 'temperature') -%}
               {%- if from_switch -%}{%- set ns.l = ns.l + [wanted] -%}
-              {%- else -%}{%- set ns.l = ns.l + [t | float if states(th) not in ['off', 'unavailable', 'unknown'] and t is number else none] -%}{%- endif -%}
+              {%- else -%}
+                {%- set ns.l = ns.l + [t | float if states(th) not in ['off', 'unavailable', 'unknown'] and t is number else none] -%}
+              {%- endif -%}
             {%- endfor -%}
             {{ ns.l }}
           applied: >-
@@ -463,7 +550,9 @@ actions:
           targets: >-
             {%- set ns = namespace(l=[]) -%}
             {%- for th in th_list -%}
-              {%- if saved[loop.index0] is number and saved[loop.index0] > 5.05 -%}{%- set ns.l = ns.l + [[th, 5]] -%}{%- endif -%}
+              {%- if saved[loop.index0] is number and saved[loop.index0] > above_off -%}
+                {%- set ns.l = ns.l + [[th, off_temp]] -%}
+              {%- endif -%}
             {%- endfor -%}
             {{ ns.l }}
 
@@ -478,7 +567,7 @@ actions:
             {%- for th in th_list -%}
               {%- set last = (applied.get(th) or [none])[0] -%}
               {%- set old = saved[loop.index0] if loop.index0 < saved | length else none -%}
-              {%- if wanted is number and (last is not number or (last - wanted) | abs >= 0.05) -%}
+              {%- if wanted is number and (last is not number or (last - wanted) | abs >= same_wanted) -%}
                 {%- set ns.a = dict(ns.a, **{th: [wanted]}) -%}{%- set ns.s = ns.s + [wanted] -%}
               {%- else -%}{%- set ns.s = ns.s + [old] -%}{%- endif -%}
             {%- endfor -%}
@@ -489,8 +578,8 @@ actions:
             {%- set ns = namespace(l=[]) -%}
             {%- for th in th_list -%}
               {%- set t = state_attr(th, 'temperature') -%}
-              {%- if trigger.id == 'back' and trigger.entity_id == th and states(th) != 'off' and t is number and t > 5.05 -%}
-                {%- set ns.l = ns.l + [[th, 5]] -%}
+              {%- if trigger.id == 'back' and trigger.entity_id == th and states(th) != 'off' and t is number and t > above_off -%}
+                {%- set ns.l = ns.l + [[th, off_temp]] -%}
               {%- endif -%}
             {%- endfor -%}
             {{ ns.l }}
@@ -525,9 +614,9 @@ actions:
               {%- set last = (applied.get(th) or [none])[0] -%}
               {%- set old = saved[loop.index0] if loop.index0 < saved | length else none -%}
               {%- set cur = state_attr(th, 'temperature') -%}
-              {%- if wanted is number and (last is not number or (last - wanted) | abs >= 0.05) -%}
+              {%- if wanted is number and (last is not number or (last - wanted) | abs >= same_wanted) -%}
                 {%- set ns.a = dict(ns.a, **{th: [wanted]}) -%}{%- set ns.s = ns.s + [wanted] -%}
-              {%- elif rc_held and states(th) not in ['off', 'unavailable', 'unknown'] and cur is number and cur >= 10 -%}
+              {%- elif rc_held and states(th) not in ['off', 'unavailable', 'unknown'] and cur is number and cur >= by_hand_from -%}
                 {%- set ns.s = ns.s + [cur | float] -%}{%- set ns.m = true -%}
               {%- else -%}{%- set ns.s = ns.s + [old] -%}{%- endif -%}
             {%- endfor -%}
@@ -550,7 +639,9 @@ actions:
                 {%- for th in th_list -%}
                   {%- set v = news.s[loop.index0] -%}
                   {%- set cur = state_attr(th, 'temperature') -%}
-                  {%- if v is number and not (cur is number and (cur - v) | abs < 0.25) -%}{%- set ns.l = ns.l + [[th, v]] -%}{%- endif -%}
+                  {%- if v is number and not (cur is number and (cur - v) | abs < same_setpoint) -%}
+                    {%- set ns.l = ns.l + [[th, v]] -%}
+                  {%- endif -%}
                 {%- endfor -%}
                 {{ ns.l }}
         else:
@@ -560,7 +651,9 @@ actions:
                 {%- set ns = namespace(l=[]) -%}
                 {%- for th in th_list -%}
                   {%- set cur = state_attr(th, 'temperature') -%}
-                  {%- if states(th) not in ['off', 'unavailable', 'unknown'] and cur is number and cur > 5.05 -%}{%- set ns.l = ns.l + [[th, 5]] -%}{%- endif -%}
+                  {%- if states(th) not in ['off', 'unavailable', 'unknown'] and cur is number and cur > above_off -%}
+                    {%- set ns.l = ns.l + [[th, off_temp]] -%}
+                  {%- endif -%}
                 {%- endfor -%}
                 {{ ns.l }}
 
@@ -571,7 +664,7 @@ actions:
     then:
       - variables:
           applied: "{{ dict(applied.items() | rejectattr(0, 'in', ['_open', '_rc']) | list) }}"
-          wanted: 5
+          wanted: "{{ off_temp }}"
 
   # Normal run (or off): write the plan's temperature where it changed.
   - if:
@@ -584,7 +677,7 @@ actions:
             {%- set ns = namespace(l=[]) -%}
             {%- for th in th_list if wanted is number -%}
               {%- set last = (applied.get(th) or [none])[0] -%}
-              {%- if last is not number or (last - wanted) | abs >= 0.05 -%}{%- set ns.l = ns.l + [[th, wanted]] -%}{%- endif -%}
+              {%- if last is not number or (last - wanted) | abs >= same_wanted -%}{%- set ns.l = ns.l + [[th, wanted]] -%}{%- endif -%}
             {%- endfor -%}
             {{ ns.l }}
 
@@ -608,7 +701,7 @@ actions:
           eff_max: "{{ eff | select('number') | max if eff | select('number') | list else none }}"
       - if:
           - condition: template
-            value_template: "{{ eff_max is number and eff_max > 5.05 and room_t >= eff_max + room_margin | float(0.5) - 0.001 }}"
+            value_template: "{{ eff_max is number and eff_max > above_off and room_t >= eff_max + room_margin | float(0.5) - float_slack }}"
         then:
           - variables:
               mode: close
@@ -619,7 +712,9 @@ actions:
               targets: >-
                 {%- set ns = namespace(l=[]) -%}
                 {%- for th in th_list -%}
-                  {%- if eff[loop.index0] is number and eff[loop.index0] > 5.05 -%}{%- set ns.l = ns.l + [[th, 5]] -%}{%- endif -%}
+                  {%- if eff[loop.index0] is number and eff[loop.index0] > above_off -%}
+                    {%- set ns.l = ns.l + [[th, off_temp]] -%}
+                  {%- endif -%}
                 {%- endfor -%}
                 {{ ns.l }}
 
@@ -670,7 +765,7 @@ actions:
               data:
                 temperature: "{{ temp }}"
             - wait_template: >-
-                {{ (state_attr(th, 'temperature') | float(-100) - temp) | abs < 0.25
+                {{ (state_attr(th, 'temperature') | float(no_setpoint) - temp) | abs < same_setpoint
                    and not is_state(th, 'off') }}
               timeout:
                 seconds: "{{ settle_time }}"
@@ -681,7 +776,9 @@ actions:
               then:
                 - variables:
                     applied: "{{ dict(applied, **{th: [temp]}) }}"
-                    late: "{{ late + [state_attr(th, 'friendly_name') or th] if mode == 'plan' and trigger.id == 'start' and last is number else late }}"
+                    late: >-
+                      {{ late + [state_attr(th, 'friendly_name') or th]
+                         if mode == 'plan' and trigger.id == 'start' and last is number else late }}
 
   # Save the state. One that is longer than the helper holds would be dropped with only a warning
   # in the log, and the room would then rewrite its setpoints on every run: say so instead.
@@ -706,9 +803,11 @@ actions:
               message: >-
                 {%- set n = applied | to_json | length -%}
                 {%- if language == 'de' -%}
-                  Der Zustand braucht {{ n }} Zeichen, {{ state_entity }} fasst {{ state_max }}: zu viele Thermostate. Weniger Thermostate wählen oder ihnen kürzere Entity-IDs geben.
+                  Der Zustand braucht {{ n }} Zeichen, {{ state_entity }} fasst {{ state_max }}:
+                  zu viele Thermostate. Weniger Thermostate wählen oder ihnen kürzere Entity-IDs geben.
                 {%- else -%}
-                  The state needs {{ n }} characters, {{ state_entity }} holds {{ state_max }}: too many thermostats. Pick fewer thermostats, or give them shorter entity ids.
+                  The state needs {{ n }} characters, {{ state_entity }} holds {{ state_max }}:
+                  too many thermostats. Pick fewer thermostats, or give them shorter entity ids.
                 {%- endif -%}
 
   # Home Assistant was not running when the period started: say so.
@@ -721,9 +820,12 @@ actions:
           notification_id: "weekheat_{{ room_name | slugify }}_late"
           title: "Weekheat: {{ room_name }}"
           message: >-
-            {%- set t = wanted | string ~ ' °C' -%}
+            {%- set number = '%g' | format(wanted) -%}
+            {%- set t = (number | replace('.', ',') if language == 'de' else number) ~ ' °C' -%}
             {%- if language == 'de' -%}
-              {{ t }} wurde erst um {{ now().strftime('%H:%M') }} eingestellt ({{ late | join(', ') }}): Home Assistant lief nicht, als die Periode begann.
+              {{ t }} wurde erst um {{ now().strftime('%H:%M') }} eingestellt ({{ late | join(', ') }}):
+              Home Assistant lief nicht, als die Periode begann.
             {%- else -%}
-              {{ t }} was only set at {{ now().strftime('%H:%M') }} ({{ late | join(', ') }}): Home Assistant was not running when the period started.
+              {{ t }} was only set at {{ now().strftime('%H:%M') }} ({{ late | join(', ') }}):
+              Home Assistant was not running when the period started.
             {%- endif -%}
