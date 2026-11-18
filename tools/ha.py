@@ -40,7 +40,7 @@ class HA:
     # REST
 
     def rest(self, method: str, path: str, body=None, timeout: float = 30):
-        """`method` /api/`path` with a JSON body; the decoded JSON answer (or text)."""
+        """Call `method` /api/`path` with a JSON body; return the decoded JSON answer (or text)."""
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(f"{self.url}/api/{path}", data=data, method=method, headers={
             "Authorization": f"Bearer {self.token}", "Content-Type": "application/json"})
@@ -113,26 +113,31 @@ class HA:
         self._sock.sendall(head + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
 
     def _recv(self) -> dict:
+        """Read one message (it may come in several frames), answering pings on the way."""
         data = b""
         while True:
-            b0, b1 = self._read(2)
-            n = b1 & 0x7F
-            if n == 126:
-                n = struct.unpack(">H", self._read(2))[0]
-            elif n == 127:
-                n = struct.unpack(">Q", self._read(8))[0]
-            chunk = self._read(n)
-            op = b0 & 0x0F
+            final, op, chunk = self._frame()
             if op == 0x9:  # ping: answer with pong
                 self._sock.sendall(bytes([0x8A, 0x80 | len(chunk)]) + b"\0\0\0\0" + chunk)
                 continue
             if op == 0x8:
                 raise HAError("websocket closed")
             data += chunk
-            if b0 & 0x80:
+            if final:
                 return json.loads(data)
 
+    def _frame(self) -> tuple[bool, int, bytes]:
+        """Read one frame: whether it ends the message, its opcode, and its payload."""
+        b0, b1 = self._read(2)
+        n = b1 & 0x7F
+        if n == 126:
+            n = struct.unpack(">H", self._read(2))[0]
+        elif n == 127:
+            n = struct.unpack(">Q", self._read(8))[0]
+        return bool(b0 & 0x80), b0 & 0x0F, self._read(n)
+
     def _read(self, n: int) -> bytes:
+        """Read exactly n bytes."""
         buf = b""
         while len(buf) < n:
             part = self._sock.recv(n - len(buf))
@@ -142,24 +147,28 @@ class HA:
         return buf
 
 
-def main():
-    """Send one WebSocket command or REST call given on the command line; print the answer."""
-    parser = argparse.ArgumentParser(description="A small Home Assistant client for development.")
-    kinds = parser.add_subparsers(dest="kind", required=True)
+def parser() -> argparse.ArgumentParser:
+    """The command line: a WebSocket command, or a REST call."""
+    top = argparse.ArgumentParser(description="A small Home Assistant client for development.")
+    kinds = top.add_subparsers(dest="kind", required=True)
     ws = kinds.add_parser("ws", help="send a WebSocket command")
-    ws.add_argument("message", help='the command as JSON, e.g. \'{"type": "ping"}\'')
+    ws.add_argument("message", help='the command as JSON, e.g. \'{"type": "get_config"}\'')
     rest = kinds.add_parser("rest", help="call the REST API")
     rest.add_argument("method", help="GET, POST, …")
     rest.add_argument("path", help="the path after /api/, e.g. states/sun.sun")
     rest.add_argument("body", nargs="?", help="a JSON body")
-    args = parser.parse_args()
+    return top
+
+
+def main():
+    """Send one WebSocket command or REST call given on the command line; print the answer."""
+    args = parser().parse_args()
     ha = HA()
     if args.kind == "ws":
         answer = ha.ws(json.loads(args.message))
     else:
         answer = ha.rest(args.method, args.path, json.loads(args.body) if args.body else None)
     print(json.dumps(answer, indent=2, ensure_ascii=False))
-
 
 if __name__ == "__main__":
     main()
