@@ -1,0 +1,15 @@
+# yamllint: the Home Assistant YAML style guide, as far as a linter can check it (guidelines 2.8).
+extends: default
+rules:
+  # Blueprint descriptions and Jinja templates may run long.
+  line-length:
+    max: 140
+  document-start: disable
+  truthy:
+    allowed-values: ["true", "false"]
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+  indentation:
+    spaces: 2
+    indent-sequences: consistent

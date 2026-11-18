@@ -117,7 +117,8 @@ These are widely accepted rules, adapted to this project. Sources are listed in 
 - **Nesting depth at most 3, cyclomatic complexity at most 10** per function.
 - **Names say what something is.** Variables and fields are nouns (`roomStatus`, not `n`), functions
   are verbs (`loadRooms`), booleans read as a yes/no question (`isOpen`, `hasSwitch`). Single letters
-  only for loop indices and coordinates (`i`, `x`, `y`). Abbreviations only when they are common
+  only for loop indices, coordinates and the two sides of a comparison (`i`, `x`, `y`; `a`, `b`
+  in a sort comparator). Abbreviations only when they are common
   (`id`, `min`, `max`, `url`, `ws`). The texts are `text`, not `t`, which in a heating app reads as a
   temperature.
 - **Naming style**: constants `UPPER_SNAKE_CASE`, classes `PascalCase`, functions and variables
@@ -251,7 +252,7 @@ To be set up (see the review's plan). Until then, reviews check these by hand.
 | 1.1 comments | `eslint-plugin-jsdoc`: `require-jsdoc` (functions, methods, classes), `require-param`, `require-returns`, `require-property` |
 | 1.2 ≤ 15 lines | ESLint `max-lines-per-function: {max: 15, skipBlankLines: true, skipComments: true}` |
 | 1.3 ≤ 400 lines | ESLint `max-lines: {max: 400, skipBlankLines: true, skipComments: true}`, `max-classes-per-file: 1` |
-| 2.2 format | Prettier (`printWidth: 100`, `singleQuote: true`); ESLint `max-len: 100`, `max-statements-per-line: 1`, `no-nested-ternary`, `max-depth: 3`, `complexity: 10`, `max-params: 3`, `id-length: {min: 2, exceptions: [i, j, x, y]}` |
+| 2.2 format | Prettier (`printWidth: 100`, `singleQuote: true`); ESLint `max-len: 100`, `max-statements-per-line: 1`, `no-nested-ternary`, `max-depth: 3`, `complexity: 10`, `max-params: 3`, `id-length: {min: 2, exceptions: [i, j, x, y, a, b]}` |
 | 2.3 JavaScript | ESLint `eqeqeq: [always, {null: ignore}]`, `no-var`, `prefer-const`, `no-empty`; `tsc --noEmit --checkJs` |
 | 2.5 security | `eslint-plugin-no-unsanitized` (flags `innerHTML` assignments) |
 | 2.7 texts | a test: same keys in every language, no unused key |

@@ -1,0 +1,11 @@
+# ruff: Python style for tools/ (guidelines 2.9): PEP 8, PEP 257 docstrings, short functions.
+line-length = 100
+
+[lint]
+select = ["E", "F", "D", "PLR0915"]
+
+[lint.pydocstyle]
+convention = "pep257"
+
+[lint.pylint]
+max-statements = 15

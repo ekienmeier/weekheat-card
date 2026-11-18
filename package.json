@@ -2,7 +2,30 @@
   "name": "weekheat-card",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "test": "node --test tests/*.test.mjs"
+    "build": "esbuild src/card.js --bundle --format=esm --target=es2022 --legal-comments=eof --outfile=dist/weekheat-card.js",
+    "test": "node --test \"tests/**/*.test.mjs\"",
+    "coverage": "node --test --experimental-test-coverage \"tests/**/*.test.mjs\"",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "types": "tsc -p jsconfig.json",
+    "check": "npm run format:check && npm run lint && npm run types && npm test"
+  },
+  "dependencies": {
+    "lit": "3.2.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "esbuild": "0.25.0",
+    "eslint": "9.39.5",
+    "eslint-plugin-jsdoc": "50.5.0",
+    "globals": "15.12.0",
+    "playwright": "1.65.1",
+    "prettier": "3.3.3",
+    "typescript": "5.6.3"
   }
 }

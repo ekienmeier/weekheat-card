@@ -22,7 +22,12 @@ function automation(id) {
  * @returns {object}
  */
 function roomConfig(name) {
-  const input = { room_name: name, thermostats: [`climate.${name}`], plans: [], state: 'input_text.x' };
+  const input = {
+    room_name: name,
+    thermostats: [`climate.${name}`],
+    plans: [],
+    state: 'input_text.x',
+  };
   return { alias: `Weekheat ${name}`, use_blueprint: { path: ROOM_PATH, input } };
 }
 
@@ -34,7 +39,9 @@ function roomConfig(name) {
 function loadAnswer(msg) {
   const marked = { metadata: { description: `Weekheat ${BLUEPRINT_VERSION}` } };
   const answers = {
-    'blueprint/list': { [msg.domain === 'script' ? 'ekienmeier/weekheat_day.yaml' : ROOM_PATH]: marked },
+    'blueprint/list': {
+      [msg.domain === 'script' ? 'ekienmeier/weekheat_day.yaml' : ROOM_PATH]: marked,
+    },
     'frontend/get_system_data': { value: null },
     'schedule/list': [],
     'config/entity_registry/list': [],
@@ -51,7 +58,11 @@ function loadAnswer(msg) {
  */
 function fakeHass({ states = {}, api = {}, ws = () => undefined }) {
   const calls = [];
-  const notFound = { error: 'Response error: 404', status_code: 404, body: { message: 'Resource not found' } };
+  const notFound = {
+    error: 'Response error: 404',
+    status_code: 404,
+    body: { message: 'Resource not found' },
+  };
   return {
     calls,
     states,
@@ -81,7 +92,13 @@ function fakeHass({ states = {}, api = {}, ws = () => undefined }) {
  */
 function cardWith(hass) {
   const card = new WeekheatCard();
-  Object.assign(card, { _hass: hass, _lang: 'en', _admin: true, _render: () => {}, _flash: () => {} });
+  Object.assign(card, {
+    _hass: hass,
+    _lang: 'en',
+    _admin: true,
+    _render: () => {},
+    _flash: () => {},
+  });
   card._config = { days: 14, day_script: 'script.weekheat_day' };
   return card;
 }
@@ -113,7 +130,10 @@ test('an automation without a configuration of its own is skipped, the rest is p
   await card._load();
   assert.equal(card._error, null);
   const [{ msg }] = published(hass);
-  assert.deepEqual(msg.value.rooms.map((r) => r.id), ['weekheat_a']);
+  assert.deepEqual(
+    msg.value.rooms.map((r) => r.id),
+    ['weekheat_a'],
+  );
   assert.equal(msg.value.script, false);
 });
 
@@ -143,7 +163,11 @@ function creatingHass(api = {}) {
   const ws = (msg) => {
     if (msg.type === 'schedule/create') {
       const id = `plan${++n}`;
-      registry.push({ platform: 'schedule', unique_id: id, entity_id: `schedule.weekheat_bad_${id}` });
+      registry.push({
+        platform: 'schedule',
+        unique_id: id,
+        entity_id: `schedule.weekheat_bad_${id}`,
+      });
       return { id, name: msg.name, monday: msg.monday };
     }
     if (msg.type === 'config/entity_registry/list') return registry;
@@ -160,7 +184,11 @@ const madeHelpers = (hass) => hass.calls.filter((c) => /\/create$/.test(c.ws ?? 
 test('Add room refuses the id of a room the card does not show (H3)', async () => {
   const hass = creatingHass();
   const card = cardWith(hass);
-  Object.assign(card, { _roomBlueprint: ROOM_PATH, _rooms: [], _allRooms: [{ id: 'weekheat_bad' }] });
+  Object.assign(card, {
+    _roomBlueprint: ROOM_PATH,
+    _rooms: [],
+    _allRooms: [{ id: 'weekheat_bad' }],
+  });
   await assert.rejects(card._addRoom('Bad', ['climate.bad']), /automation weekheat_bad/);
   assert.equal(madeHelpers(hass), 0);
   assert.ok(!hass.calls.some((c) => c.api?.startsWith('POST')));
@@ -186,7 +214,12 @@ test('Add room deletes what it made when saving the automation fails (H3)', asyn
   Object.assign(card, { _roomBlueprint: ROOM_PATH, _rooms: [], _allRooms: [], _plans: {} });
   await assert.rejects(card._addRoom('Bad', ['climate.bad']));
   const deleted = hass.calls.filter((c) => /\/delete$/.test(c.ws ?? '')).map((c) => c.ws);
-  assert.deepEqual(deleted, ['input_boolean/delete', 'input_text/delete', 'schedule/delete', 'schedule/delete']);
+  assert.deepEqual(deleted, [
+    'input_boolean/delete',
+    'input_text/delete',
+    'schedule/delete',
+    'schedule/delete',
+  ]);
   assert.deepEqual(card._plans, {});
 });
 

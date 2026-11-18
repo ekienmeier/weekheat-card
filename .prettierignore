@@ -1,0 +1,11 @@
+# Formatted by hand or by other tools: docs, blueprints and CI (YAML), the built card, the lock file.
+*.md
+*.yaml
+*.yml
+dist/
+package-lock.json
+# The card before the refactoring; removed once src/ replaces it.
+weekheat-card.js
+tests/legacy-*
+# Rewritten in the refactoring's UI step.
+tools/shoot.mjs
