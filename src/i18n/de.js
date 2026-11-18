@@ -74,7 +74,7 @@ export default {
   no_rooms: 'Noch keine Räume. Ein Raum ist eine Automation aus dem Blueprint „Weekheat room“.',
   no_script: 'Das Skript „Weekheat day“ fehlt.',
   unavailable: 'nicht erreichbar',
-  plan_in_use: 'Dieser Plan wird in der Woche verwendet und kann nicht gelöscht werden.',
+  err_plan_in_use: 'Dieser Plan wird in der Woche verwendet und kann nicht gelöscht werden.',
   confirm_delete_plan: 'Plan löschen?',
   saved: 'Gespeichert',
   error: 'Fehler',
@@ -168,4 +168,6 @@ export default {
     'Zu viele Thermostate für einen Raum: Ihr Zustand bräuchte bis zu {size} Zeichen, ein Zustands-Helfer fasst {max}. Weniger Thermostate wählen oder ihnen kürzere Entity-IDs geben.',
   room_help:
     'Ist der Raum um den Spielraum wärmer als die Solltemperatur, werden die Thermostate auf 5 °C gestellt; ist er wieder auf die Solltemperatur abgekühlt, bekommen sie sie zurück. Für Thermostate, die überschwingen oder einen verknüpften Sensor nicht beachten.',
+  err_no_exceptions: 'Kein Kalender für Ausnahmen eingestellt.',
+  err_no_switch: 'Dieser Raum hat keinen Heizungsschalter; ein Administrator kann ihn anlegen.',
 };

@@ -73,7 +73,7 @@ export default {
   no_rooms: 'No rooms yet. A room is an automation made from the "Weekheat room" blueprint.',
   no_script: 'The "Weekheat day" script is missing.',
   unavailable: 'unavailable',
-  plan_in_use: 'This plan is used in the week and cannot be deleted.',
+  err_plan_in_use: 'This plan is used in the week and cannot be deleted.',
   confirm_delete_plan: 'Delete plan?',
   saved: 'Saved',
   error: 'Error',
@@ -167,4 +167,6 @@ export default {
     'Too many thermostats for one room: their state would need up to {size} characters, and a state helper holds {max}. Pick fewer thermostats, or give them shorter entity ids.',
   room_help:
     'When the room is the margin above the setpoint, the thermostats are set to 5 °C; once it has cooled down to the setpoint, they get it back. For thermostats that overshoot or ignore a linked sensor.',
+  err_no_exceptions: 'No exceptions calendar is set.',
+  err_no_switch: 'This room has no heating switch; an administrator can add one.',
 };
