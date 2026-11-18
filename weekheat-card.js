@@ -2,7 +2,7 @@
 // Pairs with the Weekheat blueprints (weekheat_day script, weekheat_room automation).
 // The first part (exported) is plain logic without DOM, tested in tests/logic.test.mjs.
 
-export const VERSION = '0.11.0';
+export const VERSION = '0.11.1';
 export const WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const SCHEDULE_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 export const ROOM_BLUEPRINT = 'weekheat_room.yaml';
@@ -1377,7 +1377,8 @@ class WeekheatCard extends Base {
       const shown = nn.mixed ? null : this._shown(room, sel, nn);
       const pick = multi ? `<div class="thsel" role="group" aria-label="${esc(t.pick_th)}">${['', ...room.thermostats].map((e) => {
         const v = e ? this._shown(room, e, this._thNow(room, n, e)) : null;
-        return `<button class="${e === sel ? 'on' : ''}" data-a="th-sel" data-v="${esc(e)}" aria-pressed="${e === sel}">${esc(e ? this._thLabel(room, e) : t.all_th)}${typeof v === 'number' ? ` <span class="${this._thNow(room, n, e).manual ? 'manual' : 'dim'}">${esc(Number(v).toLocaleString(L === 'de' ? 'de-AT' : 'en-GB', { maximumFractionDigits: 1 }))}°</span>` : ''}</button>`;
+        const name = e ? this._thLabel(room, e) : t.all_th;
+        return `<button class="${e === sel ? 'on' : ''}" data-a="th-sel" data-v="${esc(e)}" aria-pressed="${e === sel}" title="${esc(name)}"><span class="nm">${esc(name)}</span>${typeof v === 'number' ? `<span class="${this._thNow(room, n, e).manual ? 'manual' : 'dim'}">${esc(Number(v).toLocaleString(L === 'de' ? 'de-AT' : 'en-GB', { maximumFractionDigits: 1 }))}°</span>` : ''}</button>`;
       }).join('')}</div>` : '';
       ctrl = `${pick}<div class="dialbox">
         <svg data-dial data-th="${esc(sel)}" viewBox="0 0 200 200" tabindex="0" role="slider" aria-label="${esc(nn.label || t.setpoint)}" aria-valuemin="${MIN_T}" aria-valuemax="${MAX_T}" aria-valuenow="${shown ?? ''}">${this._dialSvg(room, nn, shown)}</svg>
@@ -1440,7 +1441,7 @@ class WeekheatCard extends Base {
       parts.push(`<circle cx="${hx.toFixed(2)}" cy="${hy.toFixed(2)}" r="9" class="dhandle${v <= OFF_T ? ' off' : ''}"/>`);
     }
     const off = v != null && v <= OFF_T;
-    const { status, cls } = this._ctlStatus(n);
+    const { status, cls } = this._ctlStatus(n, false); // the selector above names the thermostat
     const big = v == null ? (n.mixed || '–') : off ? t.off : Number(v).toLocaleString(this._lang === 'de' ? 'de-AT' : 'en-GB', { maximumFractionDigits: 1 });
     const cur = n.current != null ? `${t.current} ${fmtTemp(Math.round(n.current * 10) / 10, this._lang)}` : '';
     const heat = n.heating && cls !== 'heat' ? `<tspan class="heat"> · ${esc(t.heating)}</tspan>` : '';
@@ -1452,10 +1453,10 @@ class WeekheatCard extends Base {
   }
 
   /** Status word and colour class above the setpoint (dial and slider). */
-  _ctlStatus(n) {
+  _ctlStatus(n, named = true) {
     const t = this._t;
     const word = !n.active ? t.paused : n.exercise ? t.exercise : n.heatingOff ? t.heating_off : n.windowOpen ? t.window_open : n.roomClosed ? t.rc_closed : n.manual ? t.manual : n.heating ? t.heating : t.scheduled;
-    const status = n.label ? `${n.label} · ${word}` : word;
+    const status = n.label && named ? `${n.label} · ${word}` : word;
     const cls = !n.active ? 'dim' : n.exercise ? 'window' : n.heatingOff ? 'dim' : n.windowOpen ? 'window' : n.manual ? 'manual' : n.heating ? 'heat' : 'dim';
     return { status, cls };
   }
@@ -1909,9 +1910,11 @@ const STYLE = `
   .entry ha-icon { color: var(--state-climate-heat-color, #ff8a50); flex: none; }
   .stepper { display: flex; align-items: center; gap: 8px; }
   .thsel { display: flex; gap: 6px; margin: 10px 0 0; }
-  .thsel button { flex: 1; min-height: 40px; border: 1px solid var(--divider-color); background: none; color: var(--primary-text-color); border-radius: 20px; font: inherit; font-size: .92em; cursor: pointer; padding: 4px 6px; }
+  .thsel button { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 4px; min-height: 40px; border: 1px solid var(--divider-color); background: none; color: var(--primary-text-color); border-radius: 20px; font: inherit; font-size: .92em; cursor: pointer; padding: 4px 6px; }
   .thsel button.on { border: 2px solid var(--primary-color); background: color-mix(in srgb, var(--primary-color) 14%, transparent); font-weight: 500; }
   .thsel .manual, .th .manual { color: var(--wh-manual); }
+  .thsel .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .thsel .nm + span { flex: none; }
   .slider.th1 { border: 1px solid var(--divider-color); border-radius: 8px; padding: 8px 10px 4px; }
   .allrow { display: flex; align-items: center; gap: 8px; border: 1px dashed var(--divider-color); border-radius: 8px; padding: 8px 10px; margin: 6px 0; }
   .backrow { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
