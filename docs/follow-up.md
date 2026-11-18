@@ -114,17 +114,6 @@ Each says what is wrong, where, a way to fix it, how to check it, and what it me
 - **Check.** Domain tests for each setting; screenshots unchanged with the owner's settings.
 - **Version.** Minor.
 
-### 4. L7: slugify differs from Home Assistant's for some letters
-
-- **Problem.** `slugify` in `src/domain/plans.js` removes accents and turns ß into ss, but Home
-  Assistant (python-slugify with unidecode) also transliterates letters such as ø, æ, œ, ł, đ, þ, ð.
-  The card's plan-name matching (`matchPlan`) and the blueprint's (`plan_hits`, HA's `slugify` filter)
-  can then disagree, and plan entity ids made by `createPlan` differ from what HA would make.
-- **Approach.** Render `{{ name | slugify }}` on Home Assistant (read-only) for a list of names with
-  such letters; put the pairs into a test table; add a small transliteration map before the NFKD step.
-- **Check.** The table test; the existing plan-matching tests.
-- **Version.** Patch.
-
 ### 5. L12: a room's status is computed several times per render
 
 - **Problem.** `statusOf` (`src/state/selectors.js`) runs `roomStatus` on every call; one render of an

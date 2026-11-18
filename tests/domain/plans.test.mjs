@@ -9,6 +9,53 @@ test('slugify like Home Assistant for German names', () => {
   assert.equal(slugify(' Home-Office! '), 'home_office');
 });
 
+/** Names and what `{{ name | slugify }}` gave on Home Assistant 2026.11 (L7, 2026-11-18). */
+const HA_SLUGS = [
+  ['Søren', 'soren'],
+  ['Æble Øl', 'aeble_ol'],
+  ['Cœur œuvre', 'coeur_oeuvre'],
+  ['Łódź', 'lodz'],
+  ['Đorđe', 'dorde'],
+  ['Þór', 'thor'],
+  ['Ðað', 'dad'],
+  ['Straße', 'strasse'],
+  ['ẞ', 'ss'],
+  ['Groß Fuß', 'gross_fuss'],
+  ['Bäder Öfen Über', 'bader_ofen_uber'],
+  ['Nüsse & Ähren', 'nusse_ahren'],
+  ['Café été', 'cafe_ete'],
+  ['Ångström', 'angstrom'],
+  ['Æsir ÆØÅ', 'aesir_aeoa'],
+  ['Ærø', 'aero'],
+  ['Smørrebrød', 'smorrebrod'],
+  ['Œdipe', 'oedipe'],
+  ['Œ œ Æ æ Ø ø', 'oe_oe_ae_ae_o_o'],
+  ['ŁŁ łł', 'll_ll'],
+  ['Ĳssel', 'ijssel'],
+  ['Çağrı', 'cagri'],
+  ['İstanbul ı', 'istanbul_i'],
+  ['Ħamrun', 'hamrun'],
+  ['Ŧ ŧ', 't_t'],
+  ['Ŋŋ', 'ngng'],
+  ['ĸ', 'k'],
+  ['ſ', 's'],
+  ['ﬁne ﬂow', 'fine_flow'],
+  ['Ŀl ŀl', 'l_l_l_l'],
+  ['Șt Ţ', 'st_t'],
+  ['ÆØÅ-Plan', 'aeoa_plan'],
+  [' Bad  Werktag! ', 'bad_werktag'],
+  ['Home-Office 2', 'home_office_2'],
+];
+
+test("slugify gives Home Assistant's slugs for Latin letters (L7)", () => {
+  for (const [name, slug] of HA_SLUGS) assert.equal(slugify(name), slug, name);
+});
+
+test('a plan named with ø matches its slug as Home Assistant makes it (L7)', () => {
+  const plans = ['schedule.weekheat_bad_smorrebrod'];
+  assert.equal(matchPlan('Smørrebrød', plans, { room: 'Bad' }), plans[0]);
+});
+
 test('plan labels leave out the room name', () => {
   assert.equal(planLabel('Bad Werktag', 'Bad'), 'Werktag');
   assert.equal(planLabel('Werktag', 'Bad'), 'Werktag');
