@@ -19,6 +19,12 @@ When a point here is done, update its line in the review's status table and remo
   the 0.12.0 blueprints. Before any check against it, see what it runs: the card logs its version in
   the browser console ("WEEKHEAT 0.13.0"); `python3 tools/ha.py ws '{"type": "blueprint/list",
   "domain": "automation"}'` shows the blueprints' descriptions, which end with their release.
+- After 0.13.0 (not released yet): L8 and M17 changed the blueprints. The room blueprint stores a
+  fingerprint of its thermostats with saved setpoints (`_th`) and calls the new script blueprint
+  `blueprints/script/weekheat_exercise.yaml` for the valve exercise. The release that contains them
+  sets `BLUEPRINT_VERSION` and the marks of all three; its notes must say that the blueprints change
+  and that *Update now* also imports the exercise blueprint and creates `script.weekheat_exercise`
+  (without it, a room skips the exercise and raises a notification).
 
 ## How to work on this project
 
@@ -60,8 +66,8 @@ their jobs and logs, releases `POST /repos/ekienmeier/weekheat-card/releases` wi
 `name` both `vX.Y.Z`.
 
 **Releasing.** As the README's *Versioning* says: `VERSION` in `src/version.js`; when a blueprint
-changes also `BLUEPRINT_VERSION` and the mark at the end of both blueprints' descriptions (a test
-checks they match); `npm run build`; the README's status line (minor version only); a commit
+changes also `BLUEPRINT_VERSION` and the mark at the end of all three blueprints' descriptions (a
+test checks they match); `npm run build`; the README's status line (minor version only); a commit
 `… (x.y.z)`; tag; push; wait for CI on `main`; the GitHub release named like the tag, with short
 notes that say whether the blueprints must be updated (the card's *Update now*).
 
@@ -140,9 +146,9 @@ Each says what is wrong, where, a way to fix it, how to check it, and what it me
 - **Problem.** The blueprints' logic is checked only by hand: `tools/check_blueprints.py` against the
   live Home Assistant, and the live tests listed in design.md. Nothing runs in CI.
 - **Approach.** Python tests with `pytest-homeassistant-custom-component` (it pins a Home Assistant
-  version and gives a `hass` fixture): copy both blueprints into the test config, create the day
-  script and a room automation from them, register thermostat states with `hass.states.async_set`,
-  mock `climate.set_temperature`, `calendar.get_events` and `workday.check_date` with
+  version and gives a `hass` fixture): copy the three blueprints into the test config, create the
+  day and exercise scripts and a room automation from them, register thermostat states with
+  `hass.states.async_set`, mock `climate.set_temperature`, `calendar.get_events` and `workday.check_date` with
   `async_mock_service` (with responses), and drive time with `async_fire_time_changed`. Start with the
   cases in design.md's *Testing*: a period boundary, a manual change that holds, equal adjacent
   periods, midnight, a window opening and closing, the room sensor closing and releasing, the heating
@@ -152,15 +158,6 @@ Each says what is wrong, where, a way to fix it, how to check it, and what it me
   that the Node tests and the Python tests (rendering the blueprint's templates with HA's `Template`)
   both check.
 - **Version.** None (tests only).
-
-### 8. M17: the room blueprint is still one long run
-
-- **Problem.** About 420 lines of actions in one automation run; each template is short now, but the
-  file is long (one file per blueprint, guidelines 1.3).
-- **Option** (a decision for the owner): move the valve exercise into a script blueprint of its own,
-  called by the room automation. Smaller room blueprint, but a third blueprint to install; the card's
-  update banner (`src/ha/blueprints.js`, `blueprintStatus`) would have to know it.
-- **Version.** Minor, with blueprint changes.
 
 ### 9. Optional: what the default HACS store would need
 

@@ -1,0 +1,141 @@
+blueprint:
+  name: Weekheat valve exercise
+  description: >-
+    Exercises the valves of some thermostats: all go to 30 °C and 5 °C, twice, with a wait
+    after each, then back to the setpoints and modes they had before. Thermostats that are
+    unavailable are left out. Called by the Weekheat room automations at their weekly time
+    and when the card's "Run now" is pressed; it needs no settings. Pairs with the Weekheat
+    card (custom:weekheat-card). Weekheat 0.13.0
+  domain: script
+  source_url: https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/script/weekheat_exercise.yaml
+
+fields:
+  thermostats:
+    name: Thermostats
+    description: The climate entities to exercise.
+    required: true
+    selector:
+      entity:
+        multiple: true
+        filter:
+          - domain: climate
+  wait:
+    name: Wait
+    description: How long the valves are held fully open and fully closed, each time.
+    default: 60
+    selector:
+      number:
+        min: 10
+        max: 600
+        unit_of_measurement: seconds
+  settle_time:
+    name: Settle time
+    description: How long to wait at the end for the thermostats to confirm their setpoints again.
+    default: 30
+    selector:
+      number:
+        min: 5
+        max: 300
+        unit_of_measurement: seconds
+
+# Every room calls it at the same weekly time (and all at once on "Run now"), so it runs in parallel.
+mode: parallel
+max: 50
+
+variables:
+  # The setpoints of the exercise: fully open and fully closed, in °C.
+  exercise_open: 30
+  exercise_closed: 5
+  # Two setpoints closer than this are the same (a thermostat rounds what it is sent), in °C. The
+  # room blueprint and the card have the same (same_setpoint, SAME_SETPOINT; a test checks it).
+  same_setpoint: 0.25
+  # What a thermostat without a setpoint reads as, so that it differs from any setpoint.
+  no_setpoint: -100
+
+sequence:
+  # The available thermostats, each with its setpoint (none if it has none) and its mode before.
+  - variables:
+      th_list: >-
+        {%- set given = thermostats if thermostats is defined else [] -%}
+        {{ [given] if given is string else given | list }}
+      ex_list: >-
+        {%- set ns = namespace(l=[]) -%}
+        {%- for th in th_list if states(th) not in ['unavailable', 'unknown'] -%}
+          {%- set t = state_attr(th, 'temperature') -%}
+          {%- set ns.l = ns.l + [[th, t | float if t is number else none, states(th)]] -%}
+        {%- endfor -%}
+        {{ ns.l }}
+      ex_th: "{{ ex_list | map(attribute=0) | list }}"
+      ex_wait: "{{ (wait | int(60)) if wait is defined else 60 }}"
+      ex_settle: "{{ (settle_time | int(30)) if settle_time is defined else 30 }}"
+  # Nothing to exercise.
+  - condition: template
+    value_template: "{{ ex_th | length > 0 }}"
+  # A thermostat that is off is switched to heat first, else it ignores the setpoints.
+  - if:
+      - condition: template
+        value_template: "{{ ex_list | selectattr(2, 'eq', 'off') | list | length > 0 }}"
+    then:
+      - action: climate.set_hvac_mode
+        continue_on_error: true
+        target:
+          entity_id: "{{ ex_list | selectattr(2, 'eq', 'off') | map(attribute=0) | list }}"
+        data:
+          hvac_mode: heat
+  # Fully open, wait, fully closed, wait; twice.
+  - repeat:
+      count: 2
+      sequence:
+        - action: climate.set_temperature
+          continue_on_error: true
+          target:
+            entity_id: "{{ ex_th }}"
+          data:
+            temperature: "{{ exercise_open }}"
+        - delay:
+            seconds: "{{ ex_wait }}"
+        - action: climate.set_temperature
+          continue_on_error: true
+          target:
+            entity_id: "{{ ex_th }}"
+          data:
+            temperature: "{{ exercise_closed }}"
+        - delay:
+            seconds: "{{ ex_wait }}"
+  # Each thermostat gets back its setpoint and, if it was off, its mode.
+  - repeat:
+      for_each: "{{ ex_list }}"
+      sequence:
+        - if:
+            - condition: template
+              value_template: "{{ repeat.item[1] is number }}"
+          then:
+            - action: climate.set_temperature
+              continue_on_error: true
+              target:
+                entity_id: "{{ repeat.item[0] }}"
+              data:
+                temperature: "{{ repeat.item[1] }}"
+        - if:
+            - condition: template
+              value_template: "{{ repeat.item[2] == 'off' }}"
+          then:
+            - action: climate.set_hvac_mode
+              continue_on_error: true
+              target:
+                entity_id: "{{ repeat.item[0] }}"
+              data:
+                hvac_mode: "off"
+  # Done once every thermostat reports its setpoint again (or after the settle time), so that the
+  # room automation that called it sees the setpoints from before.
+  - wait_template: >-
+      {%- set ns = namespace(ok=true) -%}
+      {%- for it in ex_list if it[1] is number -%}
+        {%- if (state_attr(it[0], 'temperature') | float(no_setpoint) - it[1]) | abs >= same_setpoint -%}
+          {%- set ns.ok = false -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ ns.ok }}
+    timeout:
+      seconds: "{{ ex_settle }}"
+    continue_on_timeout: true

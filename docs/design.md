@@ -18,7 +18,7 @@ Assistant, modelled on [Temperate](https://github.com/xman2000/temperate-card):
 - At the start of each period, the room's thermostats are set to its temperature. A change made by
   hand (thermostat knob, vendor app, HA dashboard) holds until the next period.
 - An Off period is a low setpoint (default 5 °C), never HVAC off, so frost protection stays.
-- Runs entirely inside HA (a script, automations, helpers). The card edits and shows; nothing depends
+- Runs entirely inside HA (scripts, automations, helpers). The card edits and shows; nothing depends
   on a dashboard being open.
 
 Not in scope for now: heat/cool, presence. Open windows: see *Windows and doors*; a room sensor: see
@@ -30,6 +30,7 @@ Not in scope for now: heat/cool, presence. Open windows: see *Windows and doors*
 |---|---|---|
 | `weekheat_day` | **Script blueprint**: decides working day / free day for one or more dates, and why | home |
 | `weekheat_room` | **Automation blueprint**: a room. Its inputs are the room's whole configuration | room |
+| `weekheat_exercise` | **Script blueprint**: the valve exercise of some thermostats, called by the rooms | home |
 | `weekheat-card` | Dashboard card (HACS): rooms, plan editor, week, day preview, exceptions, settings | dashboard |
 | Plans | One `schedule` helper per named plan | plan |
 | State | One `input_text` per room: what was last applied (runtime only) | room |
@@ -166,6 +167,7 @@ One automation per room, made from `weekheat_room`.
 | Week, free-day plan | see above (plans referred to by their slug) |
 | State helper | `input_text.weekheat_<room>_state` |
 | Day script | `script.weekheat_day` |
+| Valve exercise script | `script.weekheat_exercise` |
 | Settle time | default 30 s |
 
 ### Core rule: write when the scheduled temperature changes
@@ -198,7 +200,9 @@ Consequences:
 
 ### Run modes
 
-Each run, after the valve exercise, decides one mode; the first that applies wins:
+Each run, after the valve exercise, decides one mode; the first that applies wins. Before that,
+setpoints saved for another list of thermostats (see *State helper*, `_th`) are dropped together with
+the last applied values, so that the room returns to its plan:
 
 | Mode | When | What it does |
 |---|---|---|
@@ -334,11 +338,15 @@ by hand released at once (24 °C kept); 10 °C by hand then closed at the 06:15 
 
 HACS installs only the card; blueprints are copies in HA that nothing updates. So each blueprint ends its
 description with the release it belongs to (`Weekheat 0.12.0`), and the card has `BLUEPRINT_VERSION`,
-the release whose blueprints it needs (it changes only when a release changes them; a test checks both
-match). An admin's card compares them (`blueprint/list`) and, when older or unmarked, offers *Update
+the release whose blueprints it needs (it changes only when a release changes them; a test checks all
+three match). An admin's card compares them (`blueprint/list`) and, when older or unmarked, offers *Update
 now*: `blueprint/import` of the file at the card's tag (`…/blob/v0.12.0/…`, not `main`), `blueprint/save`
 over the installed copy (source URL `main`, so HA's own re-import still works), then reloading
-automations and scripts. A banner rather than silent: it changes how the rooms behave.
+automations and scripts. A banner rather than silent: it changes how the rooms behave. The valve
+exercise blueprint is also offered when it is missing (it came after 0.13.0; saved as
+`ekienmeier/weekheat_exercise.yaml`), and when `script.weekheat_exercise` is missing (the banner then
+says only that); *Update now* then creates that script (`config/script/config/weekheat_exercise`,
+`use_blueprint` with no inputs). A missing room or day blueprint is not the card's to install.
 
 ### Home Assistant down
 
@@ -364,6 +372,18 @@ the automation run, so the normal run that follows writes a new period's tempera
 between. The automation is queued, so window, plan and switch events wait for it. While it runs, the
 state helper carries `_ex` and the card shows the room as *Valve exercise*. One wait for all models: the
 W600 moves slowly and quietly, 60 s is a guess, hence configurable. Paused rooms are not exercised.
+
+**A script of its own** (review M17, after 0.13.0). The exercise itself is the script blueprint
+`weekheat_exercise` (one script for the home, `script.weekheat_exercise`, no inputs; mode `parallel`,
+since every room calls it at the same time). Its fields are `thermostats`, `wait` and `settle_time`; it
+leaves out unavailable thermostats, moves the valves, gives back setpoints and modes, and returns once
+they report their setpoints again (or after the settle time). The room automation keeps the triggers,
+the `_ex` marker and the state: it marks the room, calls the script (its input `exercise_script`) and
+waits for it, then writes the state from before. If the script does not exist (`has_value`: a missing
+script cannot be called, and `continue_on_error` does not cover that), the room skips the exercise,
+raises the notification `weekheat_<room>_exercise` (the card shows it as a banner), and runs on as
+usual; the next exercise that runs dismisses it. The card's *Update now* imports the blueprint when it
+is missing and creates the script when there is none.
 
 Valve calibration (the thermostat learning its end positions) is not reachable from HA: over HomeKit
 the Aqara thermostats expose only setpoint, mode, temperature, battery and identify. It stays in the
@@ -422,7 +442,8 @@ titles (`Working day`, `Free day`) are read too. Writing uses `calendar.create_e
   paused. If a step fails, what was made is deleted again.
 - **Language**: German and English, by the HA user's language.
 - **Banners**: HA was down (above), a state helper too short (see *State helper*), the day script
-  missing, blueprints older than the card (with *Update now*), and why the card could not load.
+  missing, blueprints older than the card or the valve exercise script missing (with *Update now*), a
+  valve exercise skipped, and why the card could not load.
 
 **Admin rights:** creating and editing helpers, scripts and automations is admin-only in HA. So
 editing plans, the week, settings and rooms needs an admin user. Other users see everything, set

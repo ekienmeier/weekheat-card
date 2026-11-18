@@ -160,6 +160,7 @@ export default {
     'Nur nötig für Thermostate, die einen verknüpften Sensor nicht beachten oder überschwingen, z. B. Aqara W600. Thermostate, die gut regeln, brauchen das nicht.',
   bp_old: 'Die Weekheat-Blueprints sind älter als die Karte ({installed} → {needed}).',
   bp_none: 'ohne Version',
+  bp_no_exercise: 'Das Skript für die Ventilpflege fehlt.',
   bp_update: 'Jetzt aktualisieren',
   err_room_name: 'Der Name braucht mindestens einen Buchstaben oder eine Ziffer.',
   err_room_exists: 'Ein Raum mit diesem Namen existiert schon (Automation {id}).',

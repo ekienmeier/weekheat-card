@@ -13,9 +13,10 @@ blueprint:
     temperature began in between.
     Optional heating switch (an input_boolean): while it is off, the thermostats
     are held at 5 °C and windows are ignored; switched on, the plan applies again.
-    Optional valve exercise, once a week: all thermostats go to 30 °C and 5 °C, twice,
-    then back to the setpoints from before (or to the plan's temperature if a period with
-    a different temperature began in between). Other events wait until it is done.
+    Optional valve exercise, once a week, by the Weekheat valve exercise script: all
+    thermostats go to 30 °C and 5 °C, twice, then back to the setpoints from before (or to
+    the plan's temperature if a period with a different temperature began in between).
+    Other events wait until it is done.
     Optional room sensor: Weekheat then holds the valves at 5 °C while the room is at
     least the margin above the setpoint, and gives the setpoint back once the room has
     cooled down to it. A workaround for thermostats that ignore a linked sensor or
@@ -156,6 +157,14 @@ blueprint:
           min: 10
           max: 600
           unit_of_measurement: seconds
+    exercise_script:
+      name: Valve exercise script
+      description: The script made from the Weekheat valve exercise blueprint.
+      default: script.weekheat_exercise
+      selector:
+        entity:
+          filter:
+            - domain: script
     room_sensor:
       name: Room sensor
       description: >-
@@ -238,6 +247,7 @@ variables:
   heating_switch: !input heating_switch
   exercise_day: !input exercise_day
   exercise_wait: !input exercise_wait
+  exercise_script: !input exercise_script
   room_sensor: !input room_sensor
   room_margin: !input room_margin
   room_hold: !input room_hold
@@ -257,9 +267,6 @@ variables:
   # While the valves are held closed, a setpoint set by hand counts from this on, in °C; a lower one
   # is a nudge from the off_temp the thermostat shows, and is undone.
   by_hand_from: 10
-  # The valve exercise's setpoints: fully open and fully closed, in °C.
-  exercise_open: 30
-  exercise_closed: 5
   # What a thermostat without a setpoint reads as, so that it differs from any setpoint.
   no_setpoint: -100
   # A window trigger can come a moment before its delay has passed, in seconds.
@@ -355,8 +362,9 @@ actions:
     value_template: >-
       {{ trigger.id != 'setpoint' or ('"_rc"' in states(state_entity)
          and (trigger.to_state.attributes.temperature | float(0)) > above_off) }}
-  # Valve exercise: open fully, close fully, twice; then the setpoints from before. Runs first, so the
-  # normal run below sees what it restored and writes a new period's temperature if one began meanwhile.
+  # Valve exercise, by the valve exercise script (it opens and closes the valves fully, twice, then
+  # gives back the setpoints from before). Runs first, so the normal run below sees what it
+  # restored and writes a new period's temperature if one began meanwhile.
   - if:
       - condition: template
         value_template: >-
@@ -366,99 +374,56 @@ actions:
              or (trigger.id == 'exercise_now' and (not want or this.entity_id in want)) }}
     then:
       - variables:
-          ex_list: >-
-            {%- set ns = namespace(l=[]) -%}
-            {%- for th in th_list -%}
-              {%- set t = state_attr(th, 'temperature') -%}
-              {%- if states(th) not in ['unavailable', 'unknown'] -%}
-                {%- set ns.l = ns.l + [[th, t | float if t is number else none, states(th)]] -%}
-              {%- endif -%}
-            {%- endfor -%}
-            {{ ns.l }}
-          ex_th: "{{ ex_list | map(attribute=0) | list }}"
+          # The script exists: a missing one cannot be called (continue_on_error does not cover it).
+          ex_ready: "{{ has_value(exercise_script) }}"
           ex_state: >-
             {%- set s = states(state_entity) -%}
             {{ s | from_json if s.startswith('{') else {} }}
-      - condition: template
-        value_template: "{{ ex_th | length > 0 }}"
-      # Marks the room for the card while it runs (left out if the state would get too long).
+      # No script: say so; the room heats on as usual.
       - if:
           - condition: template
-            value_template: "{{ (dict(ex_state, _ex=1) | to_json | length) <= state_max }}"
+            value_template: "{{ not ex_ready }}"
         then:
+          - action: persistent_notification.create
+            data:
+              notification_id: "weekheat_{{ room_name | slugify }}_exercise"
+              title: "Weekheat: {{ room_name }}"
+              message: >-
+                {%- if language == 'de' -%}
+                  Ventilpflege ausgelassen: {{ exercise_script }} fehlt. Auf der Karte „Jetzt aktualisieren“
+                  wählen oder das Skript aus dem Blueprint „Weekheat valve exercise“ anlegen.
+                {%- else -%}
+                  Valve exercise skipped: {{ exercise_script }} is missing. Press "Update now" on the
+                  card, or create the script from the "Weekheat valve exercise" blueprint.
+                {%- endif -%}
+        else:
+          # Marks the room for the card while it runs (left out if the state would get too long).
+          - if:
+              - condition: template
+                value_template: "{{ (dict(ex_state, _ex=1) | to_json | length) <= state_max }}"
+            then:
+              - action: input_text.set_value
+                target:
+                  entity_id: !input state
+                data:
+                  value: "{{ dict(ex_state, _ex=1) | to_json }}"
+          # Calling the script waits until it is done; its own steps continue on errors.
+          - action: "{{ exercise_script }}"
+            continue_on_error: true
+            data:
+              thermostats: "{{ th_list }}"
+              wait: "{{ exercise_wait | int(60) }}"
+              settle_time: "{{ settle_time }}"
+          # The state from before, without the marker.
           - action: input_text.set_value
             target:
               entity_id: !input state
             data:
-              value: "{{ dict(ex_state, _ex=1) | to_json }}"
-      - if:
-          - condition: template
-            value_template: "{{ ex_list | selectattr(2, 'eq', 'off') | list | length > 0 }}"
-        then:
-          - action: climate.set_hvac_mode
-            continue_on_error: true
-            target:
-              entity_id: "{{ ex_list | selectattr(2, 'eq', 'off') | map(attribute=0) | list }}"
+              value: "{{ ex_state | to_json }}"
+          # A note from a run without the script is no longer true.
+          - action: persistent_notification.dismiss
             data:
-              hvac_mode: heat
-      - repeat:
-          count: 2
-          sequence:
-            - action: climate.set_temperature
-              continue_on_error: true
-              target:
-                entity_id: "{{ ex_th }}"
-              data:
-                temperature: "{{ exercise_open }}"
-            - delay:
-                seconds: "{{ exercise_wait | int(60) }}"
-            - action: climate.set_temperature
-              continue_on_error: true
-              target:
-                entity_id: "{{ ex_th }}"
-              data:
-                temperature: "{{ exercise_closed }}"
-            - delay:
-                seconds: "{{ exercise_wait | int(60) }}"
-      - repeat:
-          for_each: "{{ ex_list }}"
-          sequence:
-            - if:
-                - condition: template
-                  value_template: "{{ repeat.item[1] is number }}"
-              then:
-                - action: climate.set_temperature
-                  continue_on_error: true
-                  target:
-                    entity_id: "{{ repeat.item[0] }}"
-                  data:
-                    temperature: "{{ repeat.item[1] }}"
-            - if:
-                - condition: template
-                  value_template: "{{ repeat.item[2] == 'off' }}"
-              then:
-                - action: climate.set_hvac_mode
-                  continue_on_error: true
-                  target:
-                    entity_id: "{{ repeat.item[0] }}"
-                  data:
-                    hvac_mode: "off"
-      - wait_template: >-
-          {%- set ns = namespace(ok=true) -%}
-          {%- for it in ex_list if it[1] is number -%}
-            {%- if (state_attr(it[0], 'temperature') | float(no_setpoint) - it[1]) | abs >= same_setpoint -%}
-              {%- set ns.ok = false -%}
-            {%- endif -%}
-          {%- endfor -%}
-          {{ ns.ok }}
-        timeout:
-          seconds: "{{ settle_time }}"
-        continue_on_timeout: true
-      - action: input_text.set_value
-        target:
-          entity_id: !input state
-        data:
-          value: "{{ ex_state | to_json }}"
+              notification_id: "weekheat_{{ room_name | slugify }}_exercise"
 
   # Today's day decision. If the day script fails, the weekday alone decides (Saturday and Sunday
   # free), so that windows, the heating switch and the room sensor still work.

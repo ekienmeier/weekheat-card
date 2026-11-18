@@ -41,17 +41,30 @@ function problems(ctx) {
 }
 
 /**
- * Admin: the blueprints are older than this card, with a button to update them.
+ * What the blueprint banner says: that blueprints are older than the card (or missing), or only
+ * that the valve exercise script is missing.
+ * @param {import('../../state/context.js').Context} ctx
+ * @returns {string}
+ */
+function blueprintWords(ctx) {
+  const text = texts(ctx);
+  const older = ctx.store.data.oldBlueprints.find((blueprint) => !blueprint.current);
+  if (!older) return text.bp_no_exercise;
+  const versions = { installed: older.installed || text.bp_none, needed: BLUEPRINT_VERSION };
+  return fill(text.bp_old, versions);
+}
+
+/**
+ * Admin: the blueprints are older than this card (or missing, or a script made from one), with a
+ * button to update them.
  * @param {import('../../state/context.js').Context} ctx
  * @returns {unknown}
  */
 function oldBlueprints(ctx) {
-  const [first] = ctx.store.data.oldBlueprints;
-  if (!ctx.store.data.admin || !first) return nothing;
+  if (!ctx.store.data.admin || !ctx.store.data.oldBlueprints.length) return nothing;
   const text = texts(ctx);
-  const versions = { installed: first.installed || text.bp_none, needed: BLUEPRINT_VERSION };
   return html`<div class="banner warn">
-    <span>${fill(text.bp_old, versions)}</span>
+    <span>${blueprintWords(ctx)}</span>
     <button class="btn small" @click=${() => updateOldBlueprints(ctx)}>${text.bp_update}</button>
   </div>`;
 }
