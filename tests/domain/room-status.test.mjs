@@ -67,6 +67,21 @@ test('a room on its plan: the period now, the setpoint it wants, until when', ()
   assert.equal(roomMode(status), 'scheduled');
 });
 
+test('a plan that differs by weekday: the status follows today’s periods', () => {
+  const friday = [
+    { start: 0, temperature: 19, off: false },
+    { start: 600, temperature: 22, off: false },
+  ];
+  const plan = { ...PLANS['schedule.wz_werktag'], days: { fri: friday } };
+  const today = { date: '2026-11-13', weekday: 'fri', free: false, kind: 'plain' };
+  const input = { states: {}, plans: { 'schedule.wz_werktag': plan }, today, friendly: {} };
+  const status = roomStatus(ROOM, { ...input, minute: 420 });
+  assert.equal(status.wanted, 19);
+  assert.equal(status.at.next.start, 600);
+  const monday = { ...today, date: '2026-11-16', weekday: 'mon' };
+  assert.equal(roomStatus(ROOM, { ...input, today: monday, minute: 420 }).wanted, 21);
+});
+
 test('a setpoint set by hand, or a thermostat switched off, makes the room manual', () => {
   const byHand = statusWith({ [ROOM.thermostats[1]]: climate(23) });
   assert.equal(byHand.manual, true);

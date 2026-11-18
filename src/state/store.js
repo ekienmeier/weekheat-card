@@ -48,6 +48,8 @@
  * @property {{date: string, pick: string, note: string} | null} dayEdit the exception form
  * @property {'dial' | 'compact'} layout how an opened room shows its setpoint
  * @property {{key?: string, error?: unknown, bad: boolean} | null} message a short message
+ * @property {string | null} confirming the two-step button that asks before it acts:
+ *   "delete:<plan entity>" or "exercise" (see actions/confirm.js)
  */
 
 /**
@@ -145,6 +147,7 @@ const FIRST_UI = {
   dayEdit: null,
   layout: 'dial',
   message: null,
+  confirming: null,
 };
 
 /** No drafts, and no setpoint being set. @type {{drafts: Drafts, control: ControlState}} */

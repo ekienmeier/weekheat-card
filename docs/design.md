@@ -110,6 +110,10 @@ the plan part).
   adjacent blocks, so the helper is always `on` and its attributes hold the current period.
 - A plan is used on whatever days the week assigns it to; the seven days inside the helper carry no
   meaning of their own.
+- A plan edited per weekday in Home Assistant's schedule editor still works: the room automation
+  follows the schedule's state, i.e. today's blocks, and so does the room's status on the card. The
+  Plan view shows and edits Monday's blocks, with a note that the plan differs by weekday and that
+  saving it from the card makes every day like it; it then marks no period as now.
 
 **The week** is an automation input: one plan per weekday for working days, and one free-day plan:
 

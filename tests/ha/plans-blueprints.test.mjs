@@ -26,6 +26,31 @@ test('loadPlans reads each schedule helper’s periods, by entity id', async () 
   ]);
 });
 
+test('a plan written by the card to every day is not marked as differing by weekday', async () => {
+  const blocks = ITEM.monday;
+  const item = { ...ITEM, tuesday: blocks, wednesday: blocks, thursday: blocks, friday: blocks };
+  const full = { ...item, saturday: blocks, sunday: blocks };
+  const ws = (message) => (message.type === 'schedule/list' ? [full] : [ENTRY]);
+  const plan = (await loadPlans(fakeGateway({ ws })))['schedule.bad_werktag'];
+  assert.equal(plan.perDay, false);
+  assert.deepEqual(plan.days.sun, plan.periods);
+});
+
+test('a plan edited per weekday in Home Assistant is marked, and keeps each day', async () => {
+  const warm = [{ from: '06:00:00', to: '22:00:00', data: { temperature: 22 } }];
+  const days = ['tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const item = { ...ITEM, ...Object.fromEntries(days.map((day) => [day, ITEM.monday])) };
+  const ws = (message) =>
+    message.type === 'schedule/list' ? [{ ...item, sunday: warm }] : [ENTRY];
+  const plan = (await loadPlans(fakeGateway({ ws })))['schedule.bad_werktag'];
+  assert.equal(plan.perDay, true);
+  assert.deepEqual(plan.periods, [{ start: 0, temperature: 20, off: false }]);
+  assert.deepEqual(
+    plan.days.sun.map((period) => period.temperature),
+    [null, 22, null],
+  );
+});
+
 test('createPlan names the entity after room and plan, unless that id is taken', async () => {
   const registry = [{ platform: 'schedule', unique_id: 'p1', entity_id: 'schedule.bad_werktag' }];
   const ws = (message) =>

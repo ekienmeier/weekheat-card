@@ -75,7 +75,6 @@ export default {
   no_script: 'Das Skript „Weekheat day“ fehlt.',
   unavailable: 'nicht erreichbar',
   err_plan_in_use: 'Dieser Plan wird in der Woche verwendet und kann nicht gelöscht werden.',
-  confirm_delete_plan: 'Plan löschen?',
   saved: 'Gespeichert',
   error: 'Fehler',
   new_room_paused: 'Neue Räume starten pausiert: Pläne prüfen, dann aktivieren.',
@@ -123,7 +122,6 @@ export default {
   exercise_started: 'Ventilpflege läuft',
   exercise_help:
     'Alle Thermostate auf 30 °C, warten, auf 5 °C, warten, das Ganze zweimal; danach wieder der Wert von vorher (oder der Plan, falls inzwischen eine neue Periode begann). Dauert etwa viermal die Wartezeit. Pausierte Räume werden ausgelassen.',
-  confirm_exercise: 'Ventilpflege jetzt in allen aktiven Räumen ausführen?',
   window_help:
     'Ist einer davon so lange offen, werden die Thermostate auf 5 °C gestellt; sind alle wieder zu, gilt wieder der Wert von vorher (oder der Plan, falls inzwischen eine neue Periode begann).',
   room_sensor: 'Raumsensor',
@@ -170,4 +168,9 @@ export default {
     'Ist der Raum um den Spielraum wärmer als die Solltemperatur, werden die Thermostate auf 5 °C gestellt; ist er wieder auf die Solltemperatur abgekühlt, bekommen sie sie zurück. Für Thermostate, die überschwingen oder einen verknüpften Sensor nicht beachten.',
   err_no_exceptions: 'Kein Kalender für Ausnahmen eingestellt.',
   err_no_switch: 'Dieser Raum hat keinen Heizungsschalter; ein Administrator kann ihn anlegen.',
+  // Two-step buttons (state/actions/confirm.js) and plans that differ by weekday.
+  really_delete: 'Wirklich löschen?',
+  really_exercise: 'Wirklich in allen aktiven Räumen ausführen?',
+  plan_per_day:
+    'In Home Assistant ist dieser Plan je Wochentag anders. Hier steht der Montag; wird er hier gespeichert, gilt er für jeden Tag.',
 };

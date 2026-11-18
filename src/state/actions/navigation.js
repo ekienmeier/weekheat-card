@@ -8,13 +8,15 @@ import { attempt } from './messages.js';
 const LAYOUT_KEY = 'weekheat-layout';
 
 /**
- * Close what belongs to one view of a room: the period being edited, the new-plan form, renaming.
+ * Close what belongs to one view of a room: the period being edited, the new-plan form, renaming,
+ * and a two-step button that asks (see confirm.js).
  * @param {import('../store.js').UiState} ui
  */
 function closeEditors(ui) {
   ui.period = null;
   ui.addPlan = null;
   ui.renaming = null;
+  ui.confirming = null;
 }
 
 /**
@@ -26,6 +28,7 @@ export function showView(ctx, view) {
   ctx.store.update(({ ui }) => {
     ui.view = ui.view === view ? 'rooms' : view;
     ui.dayEdit = null;
+    ui.confirming = null;
   });
 }
 
@@ -87,6 +90,7 @@ export function toggleSettingsPart(ctx, part) {
     ui.settingsPart = ui.settingsPart === part ? null : part;
     ui.addRoom = ui.settingsPart === 'add' ? { name: '', thermostats: [] } : null;
     ui.picker = null;
+    ui.confirming = null;
   });
 }
 

@@ -42,6 +42,7 @@ export const base = css`
   .btn[disabled] { opacity: 0.5; cursor: default; }
   .link { border: 0; background: none; color: var(--primary-color); cursor: pointer;
     white-space: nowrap; }
+  .btn.flat.asking, .link.asking { color: var(--wh-bad); font-weight: 500; }
   .icon { border: 0; background: none; color: var(--secondary-text-color); cursor: pointer;
     min-width: 32px; min-height: 32px; }
   .icon[disabled] { opacity: 0.35; cursor: default; }

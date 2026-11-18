@@ -15,9 +15,16 @@ import { planForDay } from './plans.js';
  */
 
 /**
+ * @typedef {object} PlanPeriods A plan's periods, as a room's status needs them.
+ * @property {import('./periods.js').Period[]} periods Monday's (the card writes them to every day)
+ * @property {Record<string, import('./periods.js').Period[]>} [days] each weekday's ("mon" …
+ *   "sun"), which differ when the plan was edited per weekday in Home Assistant
+ */
+
+/**
  * @typedef {object} StatusInput What a room's status is computed from.
  * @property {Record<string, HassState>} states Home Assistant's states
- * @property {Record<string, {periods: import('./periods.js').Period[]}>} plans by entity id
+ * @property {Record<string, PlanPeriods>} plans by entity id
  * @property {import('./plans.js').Day} today today's day decision
  * @property {number} minute the minute of the day now
  * @property {Record<string, string>} friendly the plans' friendly names
@@ -86,6 +93,17 @@ export function storedState(states, entity) {
 }
 
 /**
+ * A plan's periods on a weekday: that day's blocks, as the schedule's state (which the room
+ * automation follows) has them; Monday's when the day's are not known.
+ * @param {PlanPeriods | undefined} plan
+ * @param {string} weekday "mon" … "sun"
+ * @returns {import('./periods.js').Period[]}
+ */
+function periodsOn(plan, weekday) {
+  return plan?.days?.[weekday] || plan?.periods || [];
+}
+
+/**
  * Today's plan of a room, its period now and the setpoint it wants.
  * @param {import('./room.js').Room} room
  * @param {StatusInput} input
@@ -93,7 +111,7 @@ export function storedState(states, entity) {
  */
 function planNow(room, input) {
   const plan = planForDay(room, input.today, input.friendly);
-  const periods = input.plans[plan]?.periods || [];
+  const periods = periodsOn(input.plans[plan], input.today.weekday);
   const at = periods.length ? periodAt(periods, input.minute) : null;
   const wanted = at && at.period.temperature != null ? periodTemp(at.period) : null;
   return { plan, periods, at, wanted };

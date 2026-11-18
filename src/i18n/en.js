@@ -74,7 +74,6 @@ export default {
   no_script: 'The "Weekheat day" script is missing.',
   unavailable: 'unavailable',
   err_plan_in_use: 'This plan is used in the week and cannot be deleted.',
-  confirm_delete_plan: 'Delete plan?',
   saved: 'Saved',
   error: 'Error',
   new_room_paused: 'New rooms start paused: check the plans, then activate.',
@@ -122,7 +121,6 @@ export default {
   exercise_started: 'Valve exercise running',
   exercise_help:
     'All thermostats to 30 °C, wait, to 5 °C, wait, twice; then the value from before again (or the plan, if a new period began in between). Takes about four times the wait. Paused rooms are left out.',
-  confirm_exercise: 'Run the valve exercise now in all active rooms?',
   window_help:
     'When one of them has been open this long, the thermostats are set to 5 °C; when all are closed again, the value from before applies again (or the plan, if a new period began in between).',
   room_sensor: 'Room sensor',
@@ -169,4 +167,9 @@ export default {
     'When the room is the margin above the setpoint, the thermostats are set to 5 °C; once it has cooled down to the setpoint, they get it back. For thermostats that overshoot or ignore a linked sensor.',
   err_no_exceptions: 'No exceptions calendar is set.',
   err_no_switch: 'This room has no heating switch; an administrator can add one.',
+  // Two-step buttons (state/actions/confirm.js) and plans that differ by weekday.
+  really_delete: 'Really delete?',
+  really_exercise: 'Really run in all active rooms?',
+  plan_per_day:
+    'In Home Assistant this plan differs by weekday. Shown here is Monday; saving it here makes every day like it.',
 };

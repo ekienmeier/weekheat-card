@@ -15,6 +15,7 @@ import {
   setAddPlan,
   toggleAddPlan,
 } from '../../state/actions/plan-editor.js';
+import { confirmed } from '../../state/actions/confirm.js';
 import { selectPlan } from '../../state/actions/navigation.js';
 import { isPlanDirty, planDraft } from '../../state/drafts.js';
 import { now, planName, texts } from '../../state/selectors.js';
@@ -122,13 +123,26 @@ function usedOn(ctx, room, plan) {
 function planActions(ctx, plan) {
   const text = texts(ctx);
   const renaming = ctx.store.ui.renaming === plan.entity;
-  const remove = () => confirm(text.confirm_delete_plan) && removePlan(ctx, plan);
   const rename = button(text.rename, () => renamePlan(ctx, plan), { kind: 'link small' });
   return html`<div class="actions">
       ${button(`+ ${text.add_period}`, () => addPeriod(ctx, plan), { kind: 'btn flat small' })}
-      <span class="grow"></span>${renaming ? nothing : rename}
-      ${button(text.delete, remove, { kind: 'link small' })}</div>
+      <span class="grow"></span>${renaming ? nothing : rename}${deleteButton(ctx, plan)}</div>
     ${renaming ? nameField(ctx, plan) : nothing}${planSaveBar(ctx, plan)}`;
+}
+
+/**
+ * Delete, as a two-step button: the first press asks "Really delete?", the second deletes.
+ * @param {import('../../state/context.js').Context} ctx
+ * @param {import('../../state/actions/plan-editor.js').PlanRef} plan
+ * @returns {unknown}
+ */
+function deleteButton(ctx, plan) {
+  const text = texts(ctx);
+  const key = `delete:${plan.entity}`;
+  const asking = ctx.store.ui.confirming === key;
+  const remove = () => confirmed(ctx, key, () => removePlan(ctx, plan));
+  const label = asking ? text.really_delete : text.delete;
+  return button(label, remove, { kind: `link small ${asking ? 'asking' : ''}` });
 }
 
 /**
@@ -171,14 +185,38 @@ function planSaveBar(ctx, plan) {
  */
 function planDetail(ctx, plan, status) {
   const periods = planDraft(ctx, plan.room, plan.entity).periods;
-  const today = plan.entity === status.plan;
+  const perDay = isPerDay(ctx, plan);
+  const { minute, current } = markedNow(ctx, plan, status);
   const edit = ctx.store.ui.period;
   const editing = edit?.room === plan.room.id && edit.plan === plan.entity ? edit.index : null;
-  const current = today && status.at ? status.at.period.start : null;
   return html`<div class="pinfo dim small">${usedOn(ctx, plan.room, plan.entity)}</div>
-    ${chartView(ctx, { plan, periods, now: today ? now(ctx).min : null, selected: editing })}
+    ${perDay ? html`<div class="banner warn small">${texts(ctx).plan_per_day}</div>` : nothing}
+    ${chartView(ctx, { plan, periods, now: minute, selected: editing })}
     ${periodList(ctx, { plan, periods, current, editing })}
     ${ctx.store.data.admin ? planActions(ctx, plan) : nothing}`;
+}
+
+/**
+ * Was the plan edited per weekday in Home Assistant (so the card shows its Monday)?
+ * @param {import('../../state/context.js').Context} ctx
+ * @param {import('../../state/actions/plan-editor.js').PlanRef} plan
+ * @returns {boolean}
+ */
+function isPerDay(ctx, plan) {
+  return Boolean(ctx.store.data.plans[plan.entity]?.perDay);
+}
+
+/**
+ * What the shown plan marks as now: the minute (the chart's line) and the start of the period
+ * now. Only on today's plan, and not on one that differs by weekday: it shows Monday, not today.
+ * @param {import('../../state/context.js').Context} ctx
+ * @param {import('../../state/actions/plan-editor.js').PlanRef} plan
+ * @param {import('../../domain/room-status.js').RoomStatus} status
+ * @returns {{minute: number | null, current: number | null}}
+ */
+function markedNow(ctx, plan, status) {
+  if (plan.entity !== status.plan || isPerDay(ctx, plan)) return { minute: null, current: null };
+  return { minute: now(ctx).min, current: status.at ? status.at.period.start : null };
 }
 
 /**

@@ -5,6 +5,7 @@ import { html, nothing } from 'lit';
 import { LIMITS, WEEK } from '../../domain/constants.js';
 import { count } from '../../domain/format.js';
 import { commitNewRoom, setNewRoomName } from '../../state/actions/admin.js';
+import { confirmed } from '../../state/actions/confirm.js';
 import { goToSetup, toggleSettingsPart } from '../../state/actions/navigation.js';
 import { commitExercise, exerciseNow, setExercise } from '../../state/actions/settings.js';
 import { exerciseDraft } from '../../state/drafts.js';
@@ -12,6 +13,9 @@ import { exerciseSettings, statusOf, texts } from '../../state/selectors.js';
 import { daySettingsPanel, daySettingsParts } from './day-settings.js';
 import { actionRow, button, numberField, selectField, textField } from './parts.js';
 import { entityChips } from './room-setup.js';
+
+/** The two-step "Run now" button's key while it asks (see state/actions/confirm.js). */
+const EXERCISE_KEY = 'exercise';
 
 /**
  * A room's summary: thermostats, contacts, room sensor, paused.
@@ -129,8 +133,10 @@ function exerciseFields(ctx) {
  */
 function exercisePanel(ctx) {
   const text = texts(ctx);
-  const run = () => confirm(text.confirm_exercise) && exerciseNow(ctx);
-  const now = button(text.exercise_now, run, { kind: 'btn flat small' });
+  const asking = ctx.store.ui.confirming === EXERCISE_KEY;
+  const run = () => confirmed(ctx, EXERCISE_KEY, () => exerciseNow(ctx));
+  const label = asking ? text.really_exercise : text.exercise_now;
+  const now = button(label, run, { kind: `btn flat small ${asking ? 'asking' : ''}` });
   const save = button(text.save, () => commitExercise(ctx));
   return html`<div class="panel">${exerciseFields(ctx)}
     <div class="dim small">${text.exercise_help}</div>

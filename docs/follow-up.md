@@ -74,31 +74,6 @@ a template answer like `255` comes back as a number.
 
 Each says what is wrong, where, a way to fix it, how to check it, and what it means for the version.
 
-### 1. L9: plans are read from Monday only
-
-- **Problem.** The card shows a plan's Monday blocks (`planOf` in `src/ha/plans.js` reads
-  `item.monday`); the room automation follows the schedule's state, i.e. today's blocks. A plan
-  edited per weekday in Home Assistant's schedule editor shows one thing on the card and does another.
-- **Approach.** In `loadPlans`, compare the seven days' blocks; keep a flag `perDay` (and perhaps the
-  periods of each day). The Plan view shows a note when set ("In Home Assistant this plan differs by
-  weekday; the card shows Monday, and saving it here makes every day like it"), texts in both
-  languages. Optionally `statusOf` uses today's blocks for the period now.
-- **Check.** Tests in `tests/ha/plans-blueprints.test.mjs` (a schedule item with differing days);
-  screenshots unchanged for normal plans.
-- **Version.** Minor (a visible note). No blueprint change.
-
-### 2. L16: native confirm() dialogs
-
-- **Problem.** Deleting a plan (`src/ui/views/plan.js`, `planActions`) and running the valve exercise
-  now (`src/ui/views/settings.js`, `exercisePanel`) use the browser's `confirm()`, which ignores the
-  Home Assistant theme and blocks the page.
-- **Approach.** A two-step button: the first press sets `ui.confirming` (e.g. `delete:<plan>`,
-  `exercise`) and the button reads "Really delete?" / "Wirklich löschen?"; the second press acts; any
-  other action or a timeout clears it. Add `confirming` to `UiState` (`src/state/store.js`), an action
-  module or functions in `navigation.js`, texts in both languages.
-- **Check.** A state test (first press asks, second acts, navigation clears); screenshots of both steps.
-- **Version.** Minor.
-
 ### 3. L5: Home Assistant's number and time format
 
 - **Problem.** Numbers use `de-AT` or `en-GB` by the language (`numberLocale` in

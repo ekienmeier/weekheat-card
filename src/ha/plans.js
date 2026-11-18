@@ -1,24 +1,39 @@
 // Plans: one schedule helper each. The card writes the same blocks to all seven days, so a
-// plan's periods are read from Monday.
+// plan's periods are read from Monday; a plan edited per weekday in Home Assistant's schedule
+// editor is marked, and its days are kept for the room's status.
 
-import { SCHEDULE_DAYS } from '../domain/constants.js';
+import { SCHEDULE_DAYS, WEEK } from '../domain/constants.js';
 import { blocksToPeriods, periodsToBlocks } from '../domain/periods.js';
 import { slugify } from '../domain/plans.js';
 import { waitFor } from './wait.js';
 
 /**
+ * @typedef {{id: string, name: string, icon?: string} & Record<string, any>} ScheduleItem
+ *   A schedule helper as `schedule/list` gives it, with its blocks under "monday" … "sunday".
+ */
+
+/** @typedef {import('../domain/periods.js').Period} Period */
+
+/**
  * @typedef {object} Plan A loaded plan.
- * @property {{id: string, name: string, icon?: string, monday?: any[]}} item the schedule helper
- * @property {import('../domain/periods.js').Period[]} periods
+ * @property {ScheduleItem} item the schedule helper
+ * @property {Period[]} periods Monday's, which the card shows and edits
+ * @property {Record<string, Period[]>} days each weekday's ("mon" … "sun")
+ * @property {boolean} perDay the days differ (the plan was edited per weekday in Home Assistant);
+ *   saving it from the card makes every day like Monday
  */
 
 /**
  * A plan from its schedule helper.
- * @param {Plan['item']} item
+ * @param {ScheduleItem} item
  * @returns {Plan}
  */
 function planOf(item) {
-  return { item, periods: blocksToPeriods(item.monday) };
+  const periodsOf = (day, i) => [day, blocksToPeriods(item[SCHEDULE_DAYS[i]])];
+  const days = Object.fromEntries(WEEK.map(periodsOf));
+  const monday = JSON.stringify(days.mon);
+  const perDay = WEEK.some((day) => JSON.stringify(days[day]) !== monday);
+  return { item, periods: days.mon, days, perDay };
 }
 
 /**
