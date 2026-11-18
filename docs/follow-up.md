@@ -99,16 +99,6 @@ Each says what is wrong, where, a way to fix it, how to check it, and what it me
 - **Check.** A state test (first press asks, second acts, navigation clears); screenshots of both steps.
 - **Version.** Minor.
 
-### 5. L12: a room's status is computed several times per render
-
-- **Problem.** `statusOf` (`src/state/selectors.js`) runs `roomStatus` on every call; one render of an
-  opened room with two thermostats calls it, `thermostatStatus` and `friendlyNames` many times.
-- **Approach.** Measure first (in the browser through `shoot.mjs` with `page.evaluate` and
-  `performance.now()`, or in Node with fake states). Only if it is noticeable: memoise per render, e.g.
-  a cache keyed by the `hass` object (a `WeakMap`) and a version number that `Store.update` increments.
-- **Check.** Tests unchanged; the measurement before and after.
-- **Version.** None or patch.
-
 ### 6. L8: saved setpoints are stored by position
 
 - **Problem.** While a window is open or the room sensor holds the valves closed, the state helper's
