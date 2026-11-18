@@ -203,7 +203,7 @@ Each run, after the valve exercise, decides one mode; the first that applies win
 | Mode | When | What it does |
 |---|---|---|
 | off | the heating switch is off | forgets a held window or valve state, writes `off_temp` like a plan value |
-| open | a window has been open for the delay, nothing saved yet | saves the setpoints in `_open`, writes `off_temp` |
+| open | a window has been open for the delay, nothing saved yet | saves the setpoints in `_open` (the plan's temperature if the saved ones were dropped), writes `off_temp` |
 | hold | a window is still open | writes nothing; a new period's temperature replaces the saved value |
 | rc | setpoints are saved and the room sensor has a value | valves held closed (`_rc`): released when the room is down to the highest saved setpoint (gives them back), else kept at `off_temp`; a new period or a setpoint by hand (`by_hand_from` or more) replaces the saved value |
 | restore | setpoints are saved, all windows closed, no room sensor value | writes the saved setpoints back |
@@ -232,6 +232,25 @@ While a window is open it also holds `"_open"`: the setpoints to restore, as a l
 `"_open"` is there too, plus `"_rc": 1`; `"_rt"` is the time of the room sensor's last switch (minutes
 since the epoch). During the valve exercise, `"_ex": 1`.
 
+**Thermostats changed while held** (review L8, after 0.13.0). With `"_open"` the state also holds
+`"_th"`, a fingerprint of the thermostat list in its order (`th_print`: a polynomial hash of the entity
+ids' characters, below 999983, so at most 6 digits). A run whose list has another fingerprint (a
+thermostat added, removed, replaced or moved while a window was open or the valves were held) does not
+give the saved setpoints back to the wrong thermostats: it drops `_open`, `_rc` and the per-thermostat
+values (only `_rt` stays), and the room returns to its plan:
+
+| When the fingerprint differs | The run |
+|---|---|
+| windows closed, no room sensor | *plan*: writes the plan's temperature to every thermostat |
+| a window still open | *open*: saves the **plan's temperature** for every thermostat (not the 5 °C they have), writes 5 °C; closing gives the plan's temperature back |
+| room sensor, room still warm | *plan*, then *close* (once the hold time has passed): saves the plan's temperature, writes 5 °C |
+| heating switch off | *off*: writes 5 °C, as always |
+
+A state saved before `_th` existed counts as saved for the current list, so an update does not drop a
+held room's setpoints. Until the next run (the card runs the room after saving its thermostats; a
+change in HA's automation editor waits for the next trigger, at most 15 minutes), the card shows the
+saved setpoints by position. Changes made by hand before the window opened are lost in this case.
+
 **Size.** Home Assistant drops a value longer than the helper's maximum with only a warning in the log.
 The room would then rewrite its setpoints on every run (a change by hand no longer holds), and after a
 window closes it would have nothing to restore. Since 0.12.1:
@@ -240,7 +259,8 @@ window closes it would have nothing to restore. Since 0.12.1:
   when it reads the state, so an old state gets shorter on its next save.
 - The card refuses a room whose worst case (`stateSize`: every thermostat, all markers set) exceeds
   255 characters, when adding a room or saving its thermostats. Entity ids (with `climate.`) may then
-  be up to 91 characters long for two thermostats, 56 for three, 38 for four, 27 for five.
+  be up to 85 characters long for two thermostats, 51 for three, 35 for four, 25 for five (since `_th`;
+  before, 91, 56, 38 and 27).
 - The automation checks the length before saving. A state that does not fit is not saved, and a
   persistent notification `weekheat_<room>_state` says so (the card shows it as a banner). The valve
   exercise's `_ex` marker is left out if it would not fit.

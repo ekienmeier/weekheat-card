@@ -285,6 +285,18 @@ variables:
   switch_id: >-
     {%- set switch = heating_switch[0] if heating_switch is list and heating_switch else heating_switch -%}
     {{ switch if switch is string else '' }}
+  # A fingerprint of the thermostat list, in order. The setpoints saved in _open are listed by
+  # position, so the state stores it as _th next to them, and setpoints saved for another list (a
+  # thermostat added, removed or moved while the room was held) are not given back (see stale).
+  # A polynomial hash of the ids' characters, below 999983 (at most 6 digits; the card's stateSize
+  # counts them).
+  th_print: >-
+    {%- set chars = '._0123456789abcdefghijklmnopqrstuvwxyz' -%}
+    {%- set ns = namespace(h=th_list | length) -%}
+    {%- for c in th_list | join(',') -%}
+      {%- set ns.h = (ns.h * 41 + chars.find(c) + 2) % 999983 -%}
+    {%- endfor -%}
+    {{ ns.h }}
 
 triggers:
   - trigger: state
@@ -491,12 +503,21 @@ actions:
         {%- set t = state_attr(plan, 'temperature') -%}
         {{ t | float if is_state(plan, 'on') and t is number else none }}
       # The state as stored: per thermostat [the last setpoint applied], plus the markers _open,
-      # _rc, _rt and _ex. Releases before 0.12.1 also stored a timestamp per thermostat; it is
-      # dropped here, so the state gets shorter on its next save.
-      applied: >-
+      # _th, _rc, _rt and _ex.
+      stored: >-
         {%- set s = states(state_entity) -%}
+        {{ s | from_json if s.startswith('{') else {} }}
+      # The saved setpoints were saved for another list of thermostats (see th_print). A state saved
+      # before _th existed counts as saved for the current list.
+      stale: "{{ stored.get('_open') is list and stored.get('_th', th_print) != th_print }}"
+      # What was applied. When stale, only the room sensor's last switch (_rt) is kept: the saved
+      # setpoints and the last values may belong to other thermostats, so the room returns to its
+      # plan (with a window open, the plan's temperature is saved, not the 5 °C the thermostats may
+      # have). Releases before 0.12.1 also stored a timestamp per thermostat; it is dropped here,
+      # so the state gets shorter on its next save.
+      applied: >-
         {%- set ns = namespace(d={}) -%}
-        {%- for k, v in (s | from_json if s.startswith('{') else {}).items() -%}
+        {%- for k, v in stored.items() if not stale or k == '_rt' -%}
           {%- set ns.d = dict(ns.d, **{k: v[:1] if v is list and not k.startswith('_') else v}) -%}
         {%- endfor -%}
         {{ ns.d }}
@@ -526,18 +547,19 @@ actions:
         {%- else -%}plan{%- endif -%}
 
   # Window opened: remember the setpoints (in thermostat order) and turn down. When the heating was
-  # just switched on with a window open, remember the plan's temperature instead of the 5 °C.
+  # just switched on with a window open, or the saved setpoints were stale (the thermostats were
+  # changed while held), remember the plan's temperature instead of the 5 °C they may have.
   - if:
       - condition: template
         value_template: "{{ mode == 'open' }}"
     then:
       - variables:
-          from_switch: "{{ trigger.id == 'switch' and wanted is number }}"
+          from_plan: "{{ (trigger.id == 'switch' or stale) and wanted is number }}"
           saved: >-
             {%- set ns = namespace(l=[]) -%}
             {%- for th in th_list -%}
               {%- set t = state_attr(th, 'temperature') -%}
-              {%- if from_switch -%}{%- set ns.l = ns.l + [wanted] -%}
+              {%- if from_plan -%}{%- set ns.l = ns.l + [wanted] -%}
               {%- else -%}
                 {%- set ns.l = ns.l + [t | float if states(th) not in ['off', 'unavailable', 'unknown'] and t is number else none] -%}
               {%- endif -%}
@@ -545,7 +567,7 @@ actions:
             {{ ns.l }}
           applied: >-
             {%- set ns = namespace(a=applied) -%}
-            {%- if from_switch -%}{%- for th in th_list -%}{%- set ns.a = dict(ns.a, **{th: [wanted]}) -%}{%- endfor -%}{%- endif -%}
+            {%- if from_plan -%}{%- for th in th_list -%}{%- set ns.a = dict(ns.a, **{th: [wanted]}) -%}{%- endfor -%}{%- endif -%}
             {{ dict(ns.a, _open=saved) }}
           targets: >-
             {%- set ns = namespace(l=[]) -%}
@@ -717,6 +739,12 @@ actions:
                   {%- endif -%}
                 {%- endfor -%}
                 {{ ns.l }}
+
+  # Saved setpoints carry the fingerprint of the thermostat list they are listed for (see th_print).
+  - variables:
+      applied: >-
+        {%- set rest = dict(applied.items() | rejectattr(0, 'eq', '_th') | list) -%}
+        {{ dict(rest, _th=th_print) if '_open' in rest else rest }}
 
   # Window states are saved before writing, so the card shows them at once.
   - if:

@@ -135,27 +135,6 @@ Each says what is wrong, where, a way to fix it, how to check it, and what it me
 - **Check.** Tests unchanged; the measurement before and after.
 - **Version.** None or patch.
 
-### 6. L8: saved setpoints are stored by position
-
-- **Problem.** While a window is open or the room sensor holds the valves closed, the state helper's
-  `_open` holds the setpoints to give back, as a list in thermostat order (a list to stay within 255
-  characters, see design.md *State helper*). If the room's thermostats are changed (added, removed,
-  reordered) while it is held, the values go back to the wrong thermostats.
-- **Options** (a decision for the owner; it changes the state format, which README's *Versioning*
-  ties to 1.0):
-  1. The blueprint also stores a short fingerprint of the thermostat list (e.g. the count and the
-     total length of their entity ids), and ignores `_open` when it no longer matches: the room then
-     returns to its plan. Cheap; catches nearly every change.
-  2. The card, when it saves new thermostats for a held room, rewrites `_open` in the new order. The
-     card would write the automation's state, which crosses the layers' responsibilities and can race
-     with a run.
-  3. `_open` as a map by entity id: exact, but costs an entity id per thermostat (see H1, `stateSize`).
-- **Note.** "Forget `_open` and let the next run decide" is not safe on its own: with the window still
-  open, the open branch would save the thermostats' current 5 °C as the values to give back.
-- **Check.** New scenarios in `tools/check_blueprints.py room` (thermostats changed while held);
-  `stateSize` and its tests if the format grows; design.md's *State helper* and *Run modes*.
-- **Version.** Minor, with a blueprint change (admins get *Update now*).
-
 ### 7. M18: automated tests of the blueprints
 
 - **Problem.** The blueprints' logic is checked only by hand: `tools/check_blueprints.py` against the

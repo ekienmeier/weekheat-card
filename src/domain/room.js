@@ -103,15 +103,17 @@ export function directoryEntry(room) {
 /**
  * The most characters the room blueprint can need for a room's state helper: per thermostat the
  * last setpoint it applied, the setpoints saved while a window is open or the valves are held
- * closed, and the markers `_rc`, `_rt` and `_ex`. A room whose worst case exceeds STATE_MAX cannot
- * keep its state.
+ * closed with the fingerprint of the thermostat list they are listed for (`_th`, below 999983 in
+ * the room blueprint's `th_print`), and the markers `_rc`, `_rt` and `_ex`. A room whose worst
+ * case exceeds STATE_MAX cannot keep its state.
  * @param {string[]} thermostats the room's climate entity ids
  * @returns {number} the length of the worst-case state as JSON
  */
 export function stateSize(thermostats) {
   const widest = 22.5; // the longest setpoint as JSON, 4 characters like null
   const state = Object.fromEntries(thermostats.map((entity) => [entity, [widest]]));
-  const markers = { _open: thermostats.map(() => widest), _rc: 1, _rt: 99999999, _ex: 1 };
+  const saved = { _open: thermostats.map(() => widest), _th: 999999 };
+  const markers = { ...saved, _rc: 1, _rt: 99999999, _ex: 1 };
   return JSON.stringify({ ...state, ...markers }).length;
 }
 

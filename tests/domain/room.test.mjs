@@ -54,12 +54,12 @@ test('exerciseFromInput fills in the defaults', () => {
 
 test('the worst-case state fits four thermostats with long ids, but not six (H1)', () => {
   const ids = (amount) =>
-    Array.from({ length: amount }, (_, i) => `climate.wohnzimmer_thermostat_nummer_${i}`);
-  const empty = JSON.stringify({ _open: [], _rc: 1, _rt: 99999999, _ex: 1 }).length;
+    Array.from({ length: amount }, (_, i) => `climate.wohnzimmer_thermostat_nr_${i}`);
+  const empty = JSON.stringify({ _open: [], _th: 999999, _rc: 1, _rt: 99999999, _ex: 1 }).length;
   assert.equal(stateSize([]), empty);
   assert.ok(stateSize(ids(4)) <= STATE_MAX, String(stateSize(ids(4))));
   assert.ok(stateSize(ids(6)) > STATE_MAX, String(stateSize(ids(6))));
-  // as the blueprint writes it: one setpoint per thermostat, no timestamp
-  const sample = { 'climate.a': [22.5], _open: [22.5], _rc: 1, _rt: 29916300, _ex: 1 };
+  // as the blueprint writes it: one setpoint per thermostat, no timestamp, the list's fingerprint
+  const sample = { 'climate.a': [22.5], _open: [22.5], _th: 784314, _rc: 1, _rt: 29916300, _ex: 1 };
   assert.equal(stateSize(['climate.a']), JSON.stringify(sample).length);
 });
