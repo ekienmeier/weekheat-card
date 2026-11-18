@@ -1,7 +1,11 @@
 """Save blueprint files of this repo to Home Assistant (blueprint/save), over the copies there.
 
 Usage: python3 tools/deploy_blueprint.py blueprints/script/weekheat_day.yaml
-The HA path is ekienmeier/<file name>, as an import of the GitHub URL would make it.
+The HA path is ekienmeier/<file name>, as an import of the GitHub URL would make it. There are
+three: blueprints/automation/weekheat_room.yaml, blueprints/script/weekheat_day.yaml and
+blueprints/script/weekheat_exercise.yaml. The rooms call the valve exercise through a script made
+from the last one (script.weekheat_exercise, no inputs); saving the blueprint does not make it, the
+card's "Update now" does (or HA's script editor).
 """
 
 import argparse

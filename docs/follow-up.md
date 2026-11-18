@@ -59,6 +59,9 @@ helpers, automations or blueprints without asking.
   `room` (a git ref against the working copy: same days, same values, same writes?). It emulates
   runs read-only. Use it for every blueprint change; for an intended change, its output shows
   exactly where the versions differ (against `v0.12.0` it finds the old timestamps, as a check).
+  `room` also runs the valve exercise (the exercise script's calls are emulated with its blueprint)
+  and thermostats changed while held; `--ignore-key _th` leaves the fingerprint out when comparing
+  with a release before it (against `v0.13.0`, only the *changed* and *no script* scenarios differ).
 
 **GitHub.** There is no `gh` CLI. The token is in `~/.config/weekheat/github_token`; use the REST
 API (curl or Python): workflow runs `GET /repos/ekienmeier/weekheat-card/actions/runs?head_sha=…`,
