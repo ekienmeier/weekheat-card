@@ -11,6 +11,7 @@ import { planForDay } from './plans.js';
  * @property {string} entity_id
  * @property {string} state
  * @property {Record<string, any>} attributes
+ * @property {string} [last_updated] when it last changed (state or attributes)
  */
 
 /**

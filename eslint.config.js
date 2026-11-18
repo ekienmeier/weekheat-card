@@ -51,12 +51,7 @@ const comments = {
 };
 
 export default [
-  // The card before the refactoring and its tests; removed once src/ replaces them.
-  { ignores: ['dist/', 'node_modules/', 'weekheat-card.js', 'tests/legacy-*'] },
-  // Rewritten in the refactoring's UI step (with a read-only mode); until then not checked.
-  { ignores: ['tools/shoot.mjs'] },
-  // Rewritten in the refactoring's UI step (with a read-only mode); until then not checked.
-  { ignores: ['tools/shoot.mjs'] },
+  { ignores: ['dist/', 'node_modules/'] },
   js.configs.recommended,
   jsdoc.configs['flat/recommended'],
   {

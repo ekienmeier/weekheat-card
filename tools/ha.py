@@ -3,7 +3,8 @@
 Reads the HA base URL from ~/.config/weekheat/url (e.g. http://homeassistant.local:8123) and a
 long-lived access token from ~/.config/weekheat/token. Plain http/ws only (a LAN instance).
 
-Usage as a module:  from ha import HA; ha = HA(); ha.rest("GET", "config"); ha.ws({"type": "ping"})
+Usage as a module:  from ha import HA
+                    ha = HA(); ha.rest("GET", "config"); ha.ws({"type": "get_config"})
 Usage as a command: python3 tools/ha.py ws '{"type": "blueprint/list", "domain": "script"}'
                     python3 tools/ha.py rest GET states/sun.sun
 """
@@ -13,7 +14,8 @@ import json
 import os
 import socket
 import struct
-import sys
+import argparse
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -29,6 +31,7 @@ class HA:
     """REST calls and one WebSocket connection (opened on first use)."""
 
     def __init__(self, url: str | None = None, token: str | None = None):
+        """Connect to `url` with `token`; by default both come from ~/.config/weekheat/."""
         self.url = (url or (CONFIG / "url").read_text().strip()).rstrip("/")
         self.token = token or (CONFIG / "token").read_text().strip()
         self._sock = None
@@ -53,8 +56,9 @@ class HA:
 
     def call(self, domain: str, service: str, data: dict, response: bool = False):
         """Call a service; with `response`, return its service_response."""
-        r = self.rest("POST", f"services/{domain}/{service}" + ("?return_response" if response else ""), data)
-        return r["service_response"] if response else r
+        query = "?return_response" if response else ""
+        answer = self.rest("POST", f"services/{domain}/{service}{query}", data)
+        return answer["service_response"] if answer and response else answer
 
     def template(self, tpl: str) -> str:
         """Render a template on the server."""
@@ -76,22 +80,28 @@ class HA:
                 return answer.get("result")
 
     def _connect(self, timeout: float):
+        """Open the WebSocket and log in."""
         u = urllib.parse.urlparse(self.url)
         self._sock = socket.create_connection((u.hostname, u.port or 80), timeout=timeout)
-        key = base64.b64encode(os.urandom(16)).decode()
-        self._sock.sendall((f"GET /api/websocket HTTP/1.1\r\nHost: {u.netloc}\r\nUpgrade: websocket\r\n"
-                            f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
-                            "Sec-WebSocket-Version: 13\r\n\r\n").encode())
-        head = b""
-        while b"\r\n\r\n" not in head:
-            head += self._sock.recv(1)
-        if b" 101 " not in head.split(b"\r\n")[0]:
-            raise HAError(f"websocket upgrade failed: {head[:200]!r}")
+        self._upgrade(u.netloc)
         if self._recv().get("type") != "auth_required":
             raise HAError("no auth_required")
         self._send({"type": "auth", "access_token": self.token})
         if self._recv().get("type") != "auth_ok":
             raise HAError("websocket auth failed")
+
+    def _upgrade(self, host: str):
+        """Turn the connection into a WebSocket (the HTTP upgrade handshake)."""
+        key = base64.b64encode(os.urandom(16)).decode()
+        request = (f"GET /api/websocket HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
+                   f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                   "Sec-WebSocket-Version: 13\r\n\r\n")
+        self._sock.sendall(request.encode())
+        head = b""
+        while b"\r\n\r\n" not in head:
+            head += self._sock.recv(1)
+        if b" 101 " not in head.split(b"\r\n")[0]:
+            raise HAError(f"websocket upgrade failed: {head[:200]!r}")
 
     def _send(self, obj: dict):
         payload = json.dumps(obj).encode()
@@ -132,10 +142,24 @@ class HA:
         return buf
 
 
-if __name__ == "__main__":
+def main():
+    """Send one WebSocket command or REST call given on the command line; print the answer."""
+    parser = argparse.ArgumentParser(description="A small Home Assistant client for development.")
+    kinds = parser.add_subparsers(dest="kind", required=True)
+    ws = kinds.add_parser("ws", help="send a WebSocket command")
+    ws.add_argument("message", help='the command as JSON, e.g. \'{"type": "ping"}\'')
+    rest = kinds.add_parser("rest", help="call the REST API")
+    rest.add_argument("method", help="GET, POST, …")
+    rest.add_argument("path", help="the path after /api/, e.g. states/sun.sun")
+    rest.add_argument("body", nargs="?", help="a JSON body")
+    args = parser.parse_args()
     ha = HA()
-    if sys.argv[1] == "ws":
-        print(json.dumps(ha.ws(json.loads(sys.argv[2])), indent=2, ensure_ascii=False))
+    if args.kind == "ws":
+        answer = ha.ws(json.loads(args.message))
     else:
-        body = json.loads(sys.argv[4]) if len(sys.argv) > 4 else None
-        print(json.dumps(ha.rest(sys.argv[2], sys.argv[3], body), indent=2, ensure_ascii=False))
+        answer = ha.rest(args.method, args.path, json.loads(args.body) if args.body else None)
+    print(json.dumps(answer, indent=2, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

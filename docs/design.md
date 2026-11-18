@@ -1,6 +1,7 @@
 # Weekheat design
 
-Status: draft for review, 2026-11-13 (third round). Nothing here is built yet.
+Status: built and in use (0.12). This document says how Weekheat works and why; it is kept up to date
+with each release. The rules for the code are in [coding-guidelines.md](coding-guidelines.md).
 
 ## Goal
 
@@ -349,8 +350,9 @@ titles (`Working day`, `Free day`) are read too. Writing uses `calendar.create_e
 - **Room view**: current temperature, target, the current period and the next one ("21 °C until 07:00,
   then 17 °C"), today's plan. +/− sets the thermostat directly; that is a manual change, shown as
   "Manual: 22 °C until 21:00" while the thermostat differs from the wanted value.
-- **Plans tab**: one ribbon per plan with draggable boundaries; period list; add or remove periods; a
-  temperature or Off per period; add, rename, copy and delete plans.
+- **Plan tab**: one plan at a time (a chip per plan): a day chart (a bar per period, as high as its
+  temperature) and the period list. Administrators tap a period to edit its start, temperature or Off,
+  add or remove periods, and add (empty, a starter plan, or a copy), rename and delete plans.
 - **Week tab**: Mon–Sun with a plan picker each (Sat/Sun marked "only if made a working day"), and
   the free-day plan.
 - **Days**: the next 14 days from the day script: date, working/free, reason, the plan each room will
@@ -372,10 +374,12 @@ titles (`Working day`, `Free day`) are read too. Writing uses `calendar.create_e
   settings in three sections: the Workday sensor with the exceptions and holiday calendars, the keyword
   calendars (picked from the calendar entities), the keyword rules (keyword plus "free day" or a plan
   name, reorderable). Saved as the day script's inputs. Plan names offered are those used in any room.
-- **Setup**: "Add room" asks for a name and thermostats, then creates the starter plans, the state
-  helper and the automation. Missing pieces are listed per room with a button to create them.
+- **Setup**: "Add room" asks for a name and thermostats (found with the same search as a room's
+  Setup tab), then creates the starter plans, the state helper, the heating switch and the automation,
+  paused. If a step fails, what was made is deleted again.
 - **Language**: German and English, by the HA user's language.
-- **Banners**: HA was down (above); room automation disabled; day script or a calendar missing.
+- **Banners**: HA was down (above), a state helper too short (see *State helper*), the day script
+  missing, blueprints older than the card (with *Update now*), and why the card could not load.
 
 **Admin rights:** creating and editing helpers, scripts and automations is admin-only in HA. So
 editing plans, the week, settings and rooms needs an admin user. Other users see everything, set
@@ -389,7 +393,7 @@ An admin's card therefore publishes the rooms to HA's frontend system data under
 ```json
 { "v": 1, "script": true, "exceptions": "calendar.…",
   "rooms": [{ "entity", "id", "name", "thermostats", "plans", "week", "free_day", "state",
-              "windows", "window_delay", "heating_switch" }] }
+              "windows", "window_delay", "heating_switch", "room_sensor", "room_margin" }] }
 ```
 
 It is rewritten (only when it differs) each time an admin's card loads, and after the card saves a
@@ -397,6 +401,14 @@ room or the day settings. A change made in HA's automation editor reaches other 
 an admin opens the card. Non-admin cards subscribe to the key and reload when it changes. Everything
 else non-admins need is readable anyway: states, `schedule/list` (the plans),
 `config/entity_registry/list`, calendar events, and calling the day script for the day list.
+
+### Code
+
+The card is written in modules under `src/`, in layers that each use only the ones below
+([coding-guidelines.md](coding-guidelines.md), 1.4): `domain/` (pure logic: periods, plans, days, a
+room's status), `ha/` (the only code that calls Home Assistant), `state/` (the store, the drafts, the
+loader and the actions), `ui/` (the views, with [Lit](https://lit.dev), and the styles) and `card.js`
+(the element). esbuild bundles them into `dist/weekheat-card.js`, the one file HACS installs.
 
 ## Prerequisites in HA
 

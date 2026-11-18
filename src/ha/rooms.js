@@ -39,7 +39,9 @@ async function roomAutomations(gateway, paths) {
  * @returns {Promise<import('../domain/room.js').Room[]>}
  */
 export async function readRooms(gateway, paths) {
-  const entities = await roomAutomations(gateway, paths);
+  // In the order of Home Assistant's states, as before, so that an unchanged directory stays so.
+  const related = new Set(await roomAutomations(gateway, paths));
+  const entities = Object.keys(gateway.states).filter((entity) => related.has(entity));
   const found = entities
     .map((entity) => ({ entity, id: gateway.states[entity]?.attributes.id }))
     .filter((room) => room.id);

@@ -1,117 +1,371 @@
 // Screenshots of a Home Assistant dashboard for development, with Playwright (Chromium).
-// Env: HA_URL, HA_TOKEN (a long-lived token), OUT (directory), DARK=1 for the dark theme,
-// CARD: a card file to use instead of the installed one. Args: dashboard path, then steps:
+//
+// It is read-only unless WRITE=1: every WebSocket command that could change something (service
+// calls other than the day script, create/update/delete/save commands, events, system data) is
+// answered with an error instead of being sent, and REST calls other than GET are refused. The
+// refused commands are written to OUT/refused.json.
+//
+// Environment: HA_URL, HA_TOKEN (a long-lived token), OUT (a directory), DARK=1 for the dark
+// theme, CARD=<file> to use instead of the installed card, WRITE=1 to allow writes.
+// Arguments: the dashboard path, then steps:
 //   shot:<name>          screenshot of the first weekheat-card as <name>.png
+//   page:<name>          screenshot of the visible page (dialogs included)
 //   click:<css>          click an element (CSS pierces shadow DOM)
-//   fill:<css>=<value>   fill an input and fire change
+//   fill:<css>=<value>   fill an input
 //   select:<css>=<value> choose a select option
+//   key:<key>            press a key (e.g. Escape, ArrowUp)
 //   wait:<ms>            wait
-//   width:<px>           viewport width
-//   slide:<x>            drag the first slider's knob to x (0..1 along the bar)
-//   size:<w>x<h>         viewport size
-//   page:<name>          screenshot of the visible page (dialogs included) as <name>.png
-//   key:<key>            press a key (e.g. Escape)
-//   nowrite              the card writes nothing to HA (its writes are dropped)
-//   fake:<entity>=<v>    the card sees setpoint <v> for <entity> (nothing is written)
+//   width:<px>           viewport width;  size:<w>x<h>  viewport size
 //   drag:<x>,<y>         drag the first dial's handle to (x, y) in dial coordinates (0..200)
-// Example: node shoot.mjs /weekheat-test/w shot:start 'click:[data-a=toggle]' shot:open
+//   slide:<x>            drag the first slider's knob to x (0..1 along the bar)
+//   fake:<entity>=<v>    the card sees setpoint <v> for <entity> (nothing is written)
+// Example: node tools/shoot.mjs /weekheat-test/w shot:start 'click:.room-head' shot:open
+import { readFileSync, writeFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 
-const [, , path, ...steps] = process.argv;
-const url = process.env.HA_URL.replace(/\/$/, '');
-const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 480, height: 1400 }, deviceScaleFactor: 1.5 });
-const logs = [];
-page.on('console', (m) => { if (['error', 'warning'].includes(m.type())) logs.push(`${m.type()}: ${m.text()}`); });
-page.on('dialog', (d) => d.accept());
-page.on('pageerror', (e) => logs.push(`pageerror: ${e.message}`));
-// Serve the working copy (CARD, a file path) in place of the card installed from the Marketplace.
-if (process.env.CARD) {
-  const { readFileSync } = await import('node:fs');
-  await page.route('**/community/weekheat-card/weekheat-card.js*', (r) => r.fulfill({ contentType: 'text/javascript', body: readFileSync(process.env.CARD, 'utf8') }));
+/** WebSocket commands that change something: refused unless WRITE=1. */
+const WRITES = /\/(create|update|delete|save|import|set_system_data|set_user_data)$/;
+
+/** Other WebSocket commands that change something. */
+const WRITE_TYPES = ['fire_event', 'execute_script', 'call_service'];
+
+/** What a refused command is answered with. */
+const REFUSAL = {
+  code: 'read_only',
+  message: 'tools/shoot.mjs is read-only (WRITE=1 allows writes)',
+};
+
+/**
+ * @typedef {object} Run What a run works with.
+ * @property {import('playwright').Page} page
+ * @property {import('playwright').Locator} card the first weekheat-card
+ * @property {string} out where screenshots go
+ */
+
+/**
+ * The options from the environment and the arguments.
+ * @param {NodeJS.ProcessEnv} env
+ * @param {string[]} args
+ * @returns {Record<string, any>}
+ */
+function readOptions(env, args) {
+  const [path, ...steps] = args;
+  if (!env.HA_URL || !env.HA_TOKEN || !env.OUT || !path) {
+    throw new Error('Set HA_URL, HA_TOKEN and OUT, and give a dashboard path (see the header).');
+  }
+  const { HA_TOKEN: token, OUT: out, CARD: card } = env;
+  const flags = { dark: env.DARK === '1', writes: env.WRITE === '1' };
+  return { url: env.HA_URL.replace(/\/$/, ''), token, out, card, path, steps, ...flags };
 }
-await page.goto(`${url}/manifest.json`);
-await page.evaluate(({ url, token, dark }) => {
-  localStorage.setItem('hassTokens', JSON.stringify({
-    hassUrl: url, clientId: `${url}/`, access_token: token, token_type: 'Bearer', refresh_token: 'none',
-    expires_in: 1e9, expires: Date.now() + 1e12,
-  }));
-  localStorage.setItem('selectedLanguage', JSON.stringify('de'));
-  if (dark) localStorage.setItem('selectedTheme', JSON.stringify({ theme: 'default', dark: true }));
-}, { url, token: process.env.HA_TOKEN, dark: !!process.env.DARK });
-await page.goto(`${url}${path}`);
-try {
+
+/**
+ * Does a WebSocket message from the page change something? The day script only reads.
+ * @param {Record<string, any>} message
+ * @returns {boolean}
+ */
+function isWrite(message) {
+  const { type, domain, service } = message;
+  if (type === 'call_service' && domain === 'script' && service === 'weekheat_day') return false;
+  return WRITE_TYPES.includes(type) || WRITES.test(String(type));
+}
+
+/**
+ * Answer write commands over the WebSocket with an error instead of sending them.
+ * @param {import('playwright').WebSocketRoute} socket
+ * @param {{logs: string[], refused: object[]}} notes where refused commands are noted
+ */
+function guardSocket(socket, { logs, refused }) {
+  const server = socket.connectToServer();
+  socket.onMessage((text) => {
+    const message = JSON.parse(String(text));
+    if (!isWrite(message)) return server.send(text);
+    logs.push(`refused (read-only): ${JSON.stringify(message).slice(0, 160)}`);
+    refused.push(message);
+    socket.send(JSON.stringify({ id: message.id, type: 'result', success: false, error: REFUSAL }));
+  });
+}
+
+/**
+ * Make the page read-only: write commands are refused, over the WebSocket and REST.
+ * @param {import('playwright').Page} page
+ * @param {{logs: string[], refused: object[]}} notes
+ * @returns {Promise<void>}
+ */
+async function readOnly(page, notes) {
+  await page.routeWebSocket(/\/api\/websocket/, (socket) => guardSocket(socket, notes));
+  await page.route('**/api/**', (route) => {
+    if (route.request().method() === 'GET') return route.continue();
+    return route.fulfill({ status: 403, body: 'read-only' });
+  });
+}
+
+/**
+ * Note console errors and warnings, and accept dialogs (confirmations).
+ * @param {import('playwright').Page} page
+ * @param {string[]} logs
+ */
+function watchPage(page, logs) {
+  const shown = ['error', 'warning'];
+  const note = (message) =>
+    shown.includes(message.type()) && logs.push(`${message.type()}: ${message.text()}`);
+  page.on('console', note);
+  page.on('pageerror', (error) => logs.push(`pageerror: ${error.message}`));
+  page.on('dialog', (dialog) => dialog.accept());
+}
+
+/**
+ * Open a page with the working copy of the card (if one is given), read-only unless asked.
+ * @param {import('playwright').Browser} browser
+ * @param {Record<string, any>} options
+ * @param {{logs: string[], refused: object[]}} notes
+ * @returns {Promise<import('playwright').Page>}
+ */
+async function openPage(browser, options, notes) {
+  const page = await browser.newPage({
+    viewport: { width: 480, height: 1400 },
+    deviceScaleFactor: 1.5,
+  });
+  watchPage(page, notes.logs);
+  if (!options.writes) await readOnly(page, notes);
+  if (options.card) {
+    const body = readFileSync(options.card, 'utf8');
+    const serve = (route) => route.fulfill({ contentType: 'text/javascript', body });
+    await page.route('**/weekheat-card/weekheat-card.js*', serve);
+  }
+  await logIn(page, options);
+  return page;
+}
+
+/**
+ * Log in with the token (German, dark if asked) and open the dashboard.
+ * @param {import('playwright').Page} page
+ * @param {Record<string, any>} options
+ * @returns {Promise<void>}
+ */
+async function logIn(page, options) {
+  const { url, token, dark } = options;
+  const tokens = { hassUrl: url, clientId: `${url}/`, access_token: token, token_type: 'Bearer' };
+  const lasting = { refresh_token: 'none', expires_in: 1e9, expires: Date.now() + 1e12 };
+  const theme = dark ? { selectedTheme: { theme: 'default', dark: true } } : {};
+  const stored = { hassTokens: { ...tokens, ...lasting }, selectedLanguage: 'de', ...theme };
+  await page.goto(`${url}/manifest.json`);
+  await page.evaluate((items) => {
+    for (const [key, value] of Object.entries(items)) {
+      globalThis.localStorage.setItem(key, JSON.stringify(value));
+    }
+  }, stored);
+  await page.goto(`${url}${options.path}`);
+}
+
+/**
+ * Drag the pointer in ten moves from one point to another, pressed.
+ * @param {import('playwright').Page} page
+ * @param {[number, number]} from
+ * @param {[number, number]} to
+ * @returns {Promise<void>}
+ */
+async function dragPointer(page, [fromX, fromY], [toX, toY]) {
+  await page.mouse.move(fromX, fromY);
+  await page.mouse.down();
+  for (let i = 1; i <= 10; i++) {
+    await page.mouse.move(fromX + ((toX - fromX) * i) / 10, fromY + ((toY - fromY) * i) / 10);
+  }
+}
+
+/**
+ * The centre of an element.
+ * @param {import('playwright').Locator} locator
+ * @returns {Promise<[number, number]>}
+ */
+async function centre(locator) {
+  const box = await locator.boundingBox();
+  return [box.x + box.width / 2, box.y + box.height / 2];
+}
+
+/**
+ * Once per page: a function in the browser that gives states other setpoints (`fakes`). (It runs
+ * in the browser, so it must not use anything outside itself.)
+ * @param {import('playwright').Page} page
+ * @returns {Promise<void>}
+ */
+async function installFakes(page) {
+  await page.evaluate(() => {
+    const attributes = (state, temperature) => ({ ...state.attributes, temperature });
+    const fake = (states, fakes) =>
+      Object.fromEntries(
+        Object.entries(states).map(([id, state]) => [
+          id,
+          id in fakes ? { ...state, attributes: attributes(state, fakes[id]) } : state,
+        ]),
+      );
+    globalThis.weekheatFakeStates ||= fake;
+  });
+}
+
+/**
+ * Once per card: give its gateway states with the fake setpoints (in `gateway.fakes`).
+ * @param {import('playwright').Locator} card
+ * @returns {Promise<void>}
+ */
+async function wrapGateway(card) {
+  await card.evaluate((element) => {
+    const gateway = element.gateway;
+    if (gateway.realUse) return;
+    gateway.raw = gateway.hass;
+    gateway.realUse = gateway.use.bind(gateway);
+    gateway.use = (hass) => {
+      gateway.raw = hass;
+      gateway.realUse({
+        ...hass,
+        states: globalThis.weekheatFakeStates(hass.states, gateway.fakes),
+      });
+    };
+  });
+}
+
+/**
+ * Make the card see a setpoint for a thermostat, without writing it.
+ * @param {Run} run
+ * @param {string} arg "<entity>=<setpoint>"
+ * @returns {Promise<void>}
+ */
+async function fakeSetpoint({ page, card }, arg) {
+  await installFakes(page);
+  await wrapGateway(card);
+  const [entity, value] = pair(arg);
+  await card.evaluate(
+    (element, [id, setpoint]) => {
+      element.gateway.fakes = { ...element.gateway.fakes, [id]: setpoint };
+      element.hass = element.gateway.raw;
+    },
+    [entity, Number(value)],
+  );
+}
+
+/**
+ * A step's argument split at its last "=" ("<css>=<value>").
+ * @param {string} arg
+ * @returns {[string, string]}
+ */
+function pair(arg) {
+  const at = arg.lastIndexOf('=');
+  return [arg.slice(0, at), arg.slice(at + 1)];
+}
+
+/**
+ * Drag the dial's handle to a point of the dial (0..200), with a screenshot while dragging.
+ * @param {Run} run
+ * @param {string} arg "<x>,<y>"
+ * @returns {Promise<void>}
+ */
+async function dragDial({ page, card, out }, arg) {
+  const box = await card.locator('.dial-box svg').first().boundingBox();
+  const [x, y] = arg.split(',').map(Number);
+  /** @type {[number, number]} */
+  const to = [box.x + (x / 200) * box.width, box.y + (y / 200) * box.height];
+  await dragPointer(page, await centre(card.locator('.dial-handle').first()), to);
+  await card.screenshot({ path: `${out}/dragging.png` });
+  await page.mouse.up();
+}
+
+/**
+ * Drag the slider's knob to a point along the bar (0..1), with a screenshot while dragging.
+ * @param {Run} run
+ * @param {string} arg
+ * @returns {Promise<void>}
+ */
+async function slide({ page, card, out }, arg) {
+  const bar = await card.locator('.slider-bar').first().boundingBox();
+  const [knobX, knobY] = await centre(card.locator('.slider-knob').first());
+  await dragPointer(page, [knobX, knobY], [bar.x + Number(arg) * bar.width, knobY]);
+  await card.screenshot({ path: `${out}/sliding.png` });
+  await page.mouse.up();
+}
+
+/**
+ * Set the viewport's size from "<width>x<height>".
+ * @param {Run} run
+ * @param {string} arg
+ * @returns {Promise<void>}
+ */
+function resize({ page }, arg) {
+  const [width, height] = arg.split('x').map(Number);
+  return page.setViewportSize({ width, height });
+}
+
+/**
+ * The steps, by name: each takes the run and the step's argument.
+ * @type {Record<string, (run: Run, arg: string) => Promise<unknown>>}
+ */
+const STEPS = {
+  shot: ({ card, out }, arg) => card.screenshot({ path: `${out}/${arg}.png` }),
+  page: ({ page, out }, arg) => page.screenshot({ path: `${out}/${arg}.png` }),
+  click: ({ card }, arg) => card.locator(arg).first().click(),
+  fill: ({ card }, arg) => card.locator(pair(arg)[0]).first().fill(pair(arg)[1]),
+  select: ({ card }, arg) => card.locator(pair(arg)[0]).first().selectOption(pair(arg)[1]),
+  key: ({ page }, arg) => page.keyboard.press(arg),
+  wait: ({ page }, arg) => page.waitForTimeout(Number(arg)),
+  width: ({ page }, arg) => page.setViewportSize({ width: Number(arg), height: 1400 }),
+  size: resize,
+  fake: fakeSetpoint,
+  drag: dragDial,
+  slide,
+};
+
+/**
+ * Run the steps, waiting a little after each for the card to render.
+ * @param {Run} run
+ * @param {string[]} steps
+ * @returns {Promise<void>}
+ */
+async function runSteps(run, steps) {
+  for (const step of steps) {
+    const [name, ...rest] = step.split(':');
+    if (!STEPS[name]) throw new Error(`unknown step: ${step}`);
+    await STEPS[name](run, rest.join(':'));
+    await run.page.waitForTimeout(500);
+  }
+}
+
+/**
+ * Say what was logged, and keep the refused commands in OUT/refused.json.
+ * @param {{logs: string[], refused: object[]}} notes
+ * @param {string} out
+ */
+function report(notes, out) {
+  if (notes.refused.length)
+    writeFileSync(`${out}/refused.json`, JSON.stringify(notes.refused, null, 1));
+  console.log(notes.logs.join('\n') || 'nothing logged');
+}
+
+/**
+ * Open the dashboard and wait until the card has loaded.
+ * @param {import('playwright').Browser} browser
+ * @param {Record<string, any>} options
+ * @param {{logs: string[], refused: object[]}} notes
+ * @returns {Promise<Run>}
+ */
+async function openCard(browser, options, notes) {
+  const page = await openPage(browser, options, notes);
   await page.waitForSelector('weekheat-card', { timeout: 30000 });
-} catch (e) {
-  await page.screenshot({ path: `${process.env.OUT}/fail.png` });
-  console.log('no card; page at', page.url(), '\n' + logs.join('\n'));
-  process.exit(1);
+  await page.waitForTimeout(6000);
+  return { page, card: page.locator('weekheat-card').first(), out: options.out };
 }
-await page.waitForTimeout(6000);
-const card = page.locator(process.env.CARD_SEL || 'weekheat-card').first();
-for (const s of steps) {
-  const [cmd, ...rest] = s.split(':');
-  const arg = rest.join(':');
-  if (cmd === 'shot') await card.screenshot({ path: `${process.env.OUT}/${arg}.png` });
-  else if (cmd === 'click') { await card.locator(arg).first().click(); await page.waitForTimeout(800); }
-  else if (cmd === 'fill') { const k = arg.lastIndexOf('='); const sel = arg.slice(0, k); const v = arg.slice(k + 1); await card.locator(sel).first().fill(v); await card.locator(sel).first().dispatchEvent('change'); await page.waitForTimeout(400); }
-  else if (cmd === 'select') { const k = arg.lastIndexOf('='); const sel = arg.slice(0, k); const v = arg.slice(k + 1); await card.locator(sel).first().selectOption(v); await page.waitForTimeout(400); }
-  else if (cmd === 'wait') await page.waitForTimeout(+arg);
-  else if (cmd === 'drag') {
-    const svg = card.locator('svg[data-dial]').first();
-    const b = await svg.boundingBox();
-    const at = (x, y) => [b.x + (x / 200) * b.width, b.y + (y / 200) * b.height];
-    const h = await card.locator('svg[data-dial] .dhandle').first().boundingBox();
-    await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2);
-    await page.mouse.down();
-    const [x, y] = arg.split(',').map(Number);
-    for (let i = 1; i <= 10; i++) { const [px, py] = at(100 + ((x - 100) * i) / 10, 100 + ((y - 100) * i) / 10); await page.mouse.move(px, py); }
-    const [px, py] = at(x, y);
-    await page.mouse.move(px, py);
-    await card.screenshot({ path: `${process.env.OUT}/dragging.png` });
-    await page.mouse.up();
-    await page.waitForTimeout(800);
-  }
-  else if (cmd === 'slide') {
-    const bar = await card.locator('[data-slider] .sbar').first().boundingBox();
-    const k = await card.locator('[data-slider] .sknob').first().boundingBox();
-    const y = bar.y + bar.height / 2;
-    await page.mouse.move(k.x + k.width / 2, y);
-    await page.mouse.down();
-    const tx = bar.x + +arg * bar.width;
-    for (let i = 1; i <= 10; i++) await page.mouse.move(k.x + k.width / 2 + ((tx - k.x - k.width / 2) * i) / 10, y);
-    await card.screenshot({ path: `${process.env.OUT}/sliding.png` });
-    await page.mouse.up();
-    await page.waitForTimeout(800);
-  }
-  else if (cmd === 'width') await page.setViewportSize({ width: +arg, height: 1400 });
-  else if (cmd === 'size') { const [w, h] = arg.split('x').map(Number); await page.setViewportSize({ width: w, height: h }); }
-  else if (cmd === 'page') await page.screenshot({ path: `${process.env.OUT}/${arg}.png` });
-  else if (cmd === 'key') { await page.keyboard.press(arg); await page.waitForTimeout(500); }
-  else if (cmd === 'nowrite' || cmd === 'fake') {
-    // nowrite: every service call of the card is dropped (also via its own hass object).
-    // fake:<entity>=<setpoint>: the card sees this setpoint instead of the real one.
-    const k = arg.lastIndexOf('=');
-    const over = cmd === 'fake' ? [arg.slice(0, k), +arg.slice(k + 1)] : null;
-    await card.evaluate((el, [nowrite, over]) => {
-      if (nowrite) el.__nowrite = true;
-      if (over) el.__over = { ...(el.__over || {}), [over[0]]: over[1] };
-      if (!el.__wrapped) {
-        const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'hass');
-        Object.defineProperty(el, 'hass', { configurable: true, get() { return el._hass; }, set(h) {
-          el.__raw = h;
-          const states = { ...h.states };
-          for (const [id, t] of Object.entries(el.__over || {})) if (states[id]) states[id] = { ...states[id], attributes: { ...states[id].attributes, temperature: t } };
-          const block = el.__nowrite ? { callService: async (...a) => { console.warn('blocked', JSON.stringify(a)); } } : {};
-          desc.set.call(el, { ...h, states, ...block });
-        } });
-        el.__wrapped = true;
-        el.__raw = el._hass;
-      }
-      el.hass = el.__raw;
-    }, [cmd === 'nowrite', over]);
-    await page.waitForTimeout(400);
+
+/**
+ * Open the dashboard, run the steps, then report.
+ * @returns {Promise<void>}
+ */
+async function main() {
+  const options = readOptions(process.env, process.argv.slice(2));
+  const notes = { logs: [], refused: [] };
+  const browser = await chromium.launch();
+  try {
+    await runSteps(await openCard(browser, options, notes), options.steps);
+  } finally {
+    report(notes, options.out);
+    await browser.close();
   }
 }
-console.log(logs.join('\n') || 'no console errors');
-await browser.close();
+
+await main();

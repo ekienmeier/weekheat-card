@@ -41,7 +41,7 @@ Status: early (0.12). Tested with Aqara E1/W600 thermostats through HomeKit Cont
 |---|---|
 | `blueprints/script/weekheat_day.yaml` | Script blueprint: working day / free day for a range of dates, and why |
 | `blueprints/automation/weekheat_room.yaml` | Automation blueprint: one room (its thermostats, plans and week) |
-| `weekheat-card.js` | Dashboard card `custom:weekheat-card` |
+| `dist/weekheat-card.js` | Dashboard card `custom:weekheat-card` (built from `src/`) |
 
 ## Requirements
 
@@ -141,12 +141,22 @@ also be added in Home Assistant's calendar view.
 
 ## Development
 
-- `tests/`: logic tests, `node --test tests/*.test.mjs` (Node 22).
+Node 22. `npm install`, then:
+
+- `npm run check`: formatting (Prettier), lint (ESLint, with the size and comment rules of
+  [docs/coding-guidelines.md](docs/coding-guidelines.md)), types (`tsc --checkJs`) and the tests. CI runs
+  it on every push, plus yamllint, ruff and HACS's validation.
+- `npm run build`: bundles `src/` with [Lit](https://lit.dev) into `dist/weekheat-card.js`, the file HACS
+  installs. The built file is committed; CI checks that it is the build of the sources.
+- `src/`: the card, in layers (see the guidelines, 1.4): `domain/` pure logic, `ha/` everything that talks
+  to Home Assistant, `state/` the store and the actions, `ui/` the views and styles, `card.js` the element.
+- `tests/`: unit tests per layer, `npm test`; `npm run coverage` for the coverage.
 - `tools/ha.py`: a small REST/WebSocket client (URL and token from `~/.config/weekheat/`).
 - `tools/deploy_blueprint.py`: save a blueprint from this repo to Home Assistant.
 - `tools/shoot.mjs`: screenshots of a dashboard with Playwright (card or whole page, dialogs included), with
-  the working copy of the card in place of the installed one. `nowrite` drops every service call the card
-  makes and `fake:<entity>=<setpoint>` shows a setpoint without writing it, for checks against a live HA.
+  `CARD=dist/weekheat-card.js` in place of the installed card. **Read-only** unless `WRITE=1`: every command
+  that would change something is refused (and listed in `OUT/refused.json`). `fake:<entity>=<setpoint>`
+  shows a setpoint without writing it.
 
 ## Versioning
 
@@ -161,7 +171,8 @@ also be added in Home Assistant's calendar view.
 - The blueprints have no version of their own: they are released with the card. The release notes say
   when a blueprint must be re-imported.
 
-A release is: `VERSION` in `weekheat-card.js` and the status line above, a commit titled
+A release is: `VERSION` in `src/version.js` (and `BLUEPRINT_VERSION` with the blueprints' marks when a
+blueprint changed), `npm run build`, the status line above, a commit titled
 `… (x.y.z)`, a tag `vx.y.z` and a GitHub release with short notes (HACS offers it as the update). The
 release's name is the tag itself (`vx.y.z`): HACS shows both as the heading of its update notes when they differ.
 

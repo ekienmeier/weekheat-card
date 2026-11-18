@@ -179,3 +179,38 @@ export function allPlanNames(ctx) {
 export function exerciseSettings(ctx) {
   return exerciseFromInput(ctx.store.data.allRooms[0]?.cfg?.use_blueprint?.input);
 }
+
+/**
+ * The name of an entity's area: its own, else its device's (from the registries Home Assistant
+ * gives the card); '' when it has none.
+ * @param {import('./context.js').Context} ctx
+ * @param {string} entity
+ * @returns {string}
+ */
+export function areaOf(ctx, entity) {
+  const { entities = {}, devices = {}, areas = {} } = ctx.gateway.hass;
+  const entry = entities[entity] || {};
+  const area = entry.area_id || devices[entry.device_id]?.area_id;
+  return areas[area]?.name || '';
+}
+
+/**
+ * The entities a room's view depends on.
+ * @param {import('../domain/room.js').Room} room
+ * @returns {string[]}
+ */
+function roomEntities(room) {
+  const one = [room.entity, room.state, room.heating_switch, room.room_sensor];
+  return [...one, ...room.thermostats, ...room.plans, ...(room.windows || [])].filter(Boolean);
+}
+
+/**
+ * A fingerprint of the states the card shows: it changes when one of them changes, so the card
+ * renders again only then (Home Assistant hands it every state change in the home).
+ * @param {import('./context.js').Context} ctx
+ * @returns {string}
+ */
+export function watchedStates(ctx) {
+  const ids = new Set((ctx.store.data.rooms || []).flatMap(roomEntities));
+  return [...ids].map((id) => ctx.gateway.states[id]?.last_updated).join('|');
+}

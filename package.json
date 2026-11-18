@@ -6,7 +6,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "esbuild src/card.js --bundle --format=esm --target=es2022 --legal-comments=eof --outfile=dist/weekheat-card.js",
+    "build": "esbuild src/index.js --bundle --format=esm --target=es2022 --legal-comments=eof --outfile=dist/weekheat-card.js",
     "test": "node --test \"tests/**/*.test.mjs\"",
     "coverage": "node --test --experimental-test-coverage \"tests/**/*.test.mjs\"",
     "lint": "eslint .",

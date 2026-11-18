@@ -71,7 +71,7 @@ export function targetsText(targets, lang) {
 /**
  * A count with the singular or plural word: "1 Regel", "2 Regeln".
  * @param {number} amount
- * @param {[string, string]} words singular and plural
+ * @param {string[]} words the singular and the plural
  * @returns {string}
  */
 export function count(amount, [one, many]) {

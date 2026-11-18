@@ -1,7 +1,11 @@
 # Weekheat
 
-Home Assistant heating plans: a Lovelace card (`weekheat-card.js`) and two blueprints (`blueprints/`).
-Design and decisions: `docs/design.md`. Tests: `npm test` (Node 22).
+Home Assistant heating plans: a Lovelace card (source in `src/`, built to `dist/weekheat-card.js` with
+`npm run build`; the built file is committed) and two blueprints (`blueprints/`). Design and decisions:
+`docs/design.md`. Checks: `npm run check` (format, lint, types, tests; Node 22).
+
+Checks against the live Home Assistant: `tools/shoot.mjs` (read-only unless `WRITE=1`) and `tools/ha.py`
+(read with it; never write to the user's thermostats or helpers without asking).
 
 ## Coding guidelines
 
@@ -14,6 +18,7 @@ section 1.4 there. Existing code is brought in line by the plan in `docs/review-
 
 Follow the *Versioning* section of `README.md`. In short: a new feature or visible change raises the
 minor version, a fix the patch version; docs, tests or tools alone get none. A release sets `VERSION` in
-`weekheat-card.js` and the README's status line, uses a commit titled `… (x.y.z)`, a tag `vx.y.z` and a
+`src/version.js` (and `BLUEPRINT_VERSION` when a blueprint changed), runs `npm run build`, sets the README's
+status line, uses a commit titled `… (x.y.z)`, a tag `vx.y.z` and a
 GitHub release named exactly like the tag (`vx.y.z`; HACS shows both when they differ) with short notes
 that say whether a blueprint must be re-imported.
