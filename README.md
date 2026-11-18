@@ -27,7 +27,7 @@ single setpoint.
   Only for thermostats that ignore a linked sensor or overshoot, see [Room sensor](#room-sensor-a-workaround).
 - **Valve exercise**: once a week (day, time and wait set on the card), all thermostats go to 30 °C and
   5 °C, twice, then back to what they had before. Other events wait until it is done.
-- Everything runs inside Home Assistant (a script, one automation per room, schedule helpers). The
+- Everything runs inside Home Assistant (two scripts, one automation per room, schedule helpers). The
   card edits and shows; nothing depends on a dashboard being open.
 
 Based on the idea and structure of [Temperate](https://github.com/xman2000/temperate-card) by Stephen
@@ -41,6 +41,7 @@ Status: early (0.13). Tested with Aqara E1/W600 thermostats through HomeKit Cont
 |---|---|
 | `blueprints/script/weekheat_day.yaml` | Script blueprint: working day / free day for a range of dates, and why |
 | `blueprints/automation/weekheat_room.yaml` | Automation blueprint: one room (its thermostats, plans and week) |
+| `blueprints/script/weekheat_exercise.yaml` | Script blueprint: the valve exercise, which the rooms call |
 | `dist/weekheat-card.js` | Dashboard card `custom:weekheat-card` (built from `src/`) |
 
 ## Requirements
@@ -73,14 +74,18 @@ works against the plan, and Weekheat cannot tell it from a change made by hand.
 
 1. **Card**: in the Home Assistant Marketplace (HACS on older versions), add this repository as a
    custom repository of type **Dashboard**, then download **Weekheat**.
-2. **Blueprints**: import both under *Settings → Automations & scenes → Blueprints → Import*:
+2. **Blueprints**: import all three under *Settings → Automations & scenes → Blueprints → Import*:
    ```
    https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/script/weekheat_day.yaml
    https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/automation/weekheat_room.yaml
+   https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/script/weekheat_exercise.yaml
    ```
 3. **Day script**: create a script from *Weekheat day* with the id `weekheat_day` (so it becomes
    `script.weekheat_day`). Pick the Workday sensor and the exceptions calendar; calendars and keyword
    rules can be set later on the card.
+   **Valve exercise script**: the card offers to create it (*Update now*), or create a script from
+   *Weekheat valve exercise* with the id `weekheat_exercise` (it has no settings). Without it, the
+   rooms skip the valve exercise and say so in a notification.
 4. **Card**: add it to a dashboard:
    ```yaml
    type: custom:weekheat-card
@@ -95,10 +100,12 @@ works against the plan, and Weekheat cannot tell it from a change made by hand.
 - **Card**: update it in the Home Assistant Marketplace (HACS), then reload the browser.
 - **Blueprints**: HACS does not update them. When a release changes them, an administrator's card shows
   *"The Weekheat blueprints are older than the card"* with **Update now**: one tap saves the blueprints
-  of exactly that card release and reloads the automations; nothing else to do. The release notes say
-  when a release changes the blueprints.
+  of exactly that card release (importing one that is missing, such as the valve exercise blueprint
+  that came after 0.13), creates the valve exercise script if there is none and reloads the
+  automations; nothing else to do. The release notes say when a release changes the blueprints.
 - Without the card (or before 0.12): *Settings → Automations & scenes → Blueprints*, the ⋮ menu of
-  *Weekheat room* and *Weekheat day*, **Re-import blueprint**. Your room automations keep their settings.
+  *Weekheat room*, *Weekheat day* and *Weekheat valve exercise*, **Re-import blueprint** (a missing
+  one is imported as in *Installation*). Your room automations keep their settings.
 
 ## Room sensor: a workaround
 
@@ -155,7 +162,8 @@ Node 22. `npm install`, then:
 - `tools/check_blueprints.py`: checks the blueprints against Home Assistant, read-only:
   `validate` (HA's `validate_config` with the real inputs), `day` and `room` (a git ref against the working
   copy: same days, same values, same writes?).
-- `tools/deploy_blueprint.py`: save a blueprint from this repo to Home Assistant.
+- `tools/deploy_blueprint.py`: save a blueprint from this repo to Home Assistant (it does not create the
+  valve exercise script).
 - `tools/compare_shots.mjs`: compares two folders of screenshots (pixels that differ, and a diff picture).
 - `tools/shoot.mjs`: screenshots of a dashboard with Playwright (card or whole page, dialogs included), with
   `CARD=dist/weekheat-card.js` in place of the installed card. **Read-only** unless `WRITE=1`: every command

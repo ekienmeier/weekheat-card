@@ -5,6 +5,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import yaml from 'js-yaml';
 import {
+  EXERCISE_ALIAS,
+  EXERCISE_BLUEPRINT,
+  EXERCISE_SCRIPT,
   LIMITS,
   OFF_T,
   SAME_SETPOINT,
@@ -19,6 +22,7 @@ import { EXERCISE_DEFAULTS } from '../src/domain/room.js';
 const FILES = {
   room: 'blueprints/automation/weekheat_room.yaml',
   day: 'blueprints/script/weekheat_day.yaml',
+  exercise: 'blueprints/script/weekheat_exercise.yaml',
 };
 
 /** YAML with Home Assistant's !input tag (read as the input's name). */
@@ -28,7 +32,7 @@ const SCHEMA = yaml.DEFAULT_SCHEMA.extend([
 
 /**
  * A blueprint's text.
- * @param {string} name "room" or "day"
+ * @param {string} name "room", "day" or "exercise"
  * @returns {string}
  */
 function source(name) {
@@ -37,7 +41,7 @@ function source(name) {
 
 /**
  * A blueprint, parsed.
- * @param {string} name "room" or "day"
+ * @param {string} name "room", "day" or "exercise"
  * @returns {any}
  */
 function blueprint(name) {
@@ -50,6 +54,24 @@ test('the room blueprint uses the card’s Off setpoint and tolerances', () => {
   assert.equal(variables.same_setpoint, SAME_SETPOINT);
   assert.equal(variables.same_wanted, SAME_WANTED);
   assert.match(variables.state_max, new RegExp(`int\\(${STATE_MAX}\\)`));
+});
+
+test('the room blueprint’s fingerprint has at most the 6 digits that stateSize counts (L8)', () => {
+  const { variables } = blueprint('room');
+  const modulus = Number(variables.th_print.match(/\) % (\d+) -%\}/)[1]);
+  assert.ok(modulus <= 10 ** 6, String(modulus));
+});
+
+test('the valve exercise script and the room blueprint use the same setpoint tolerance', () => {
+  assert.equal(blueprint('exercise').variables.same_setpoint, SAME_SETPOINT);
+});
+
+test('the room blueprint calls the card’s valve exercise script by default', () => {
+  const { input } = blueprint('room').blueprint;
+  assert.equal(input.exercise_script.default, EXERCISE_SCRIPT);
+  const { blueprint: meta } = blueprint('exercise');
+  assert.equal(meta.name, EXERCISE_ALIAS);
+  assert.ok(FILES.exercise.endsWith(EXERCISE_BLUEPRINT));
 });
 
 test('the room blueprint’s input limits are the card’s', () => {

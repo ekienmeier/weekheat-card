@@ -1,13 +1,18 @@
 """Check the blueprints against Home Assistant, read-only: templates are rendered, nothing is saved.
 
   python3 tools/check_blueprints.py validate
-      HA's validate_config on both blueprints, with the inputs of the real rooms and day script.
+      HA's validate_config on the blueprints, with the inputs of the real rooms and day script
+      (the valve exercise script has no inputs).
   python3 tools/check_blueprints.py day [--ref v0.13.0] [--days 120]
       The day script of a git ref and of the working copy decide the same days (real events plus
       synthetic ones for the hard cases)?
   python3 tools/check_blueprints.py room [--ref v0.13.0] [--room weekheat_wohnzimmer]
+      [--ignore-key _th]
       The room blueprint of a git ref and of the working copy compute the same values and would
-      write the same, in scenarios that reach every run mode?
+      write the same, in scenarios that reach every run mode, the valve exercise (a call of the
+      exercise script is emulated with its blueprint) and thermostats changed while held?
+      --ignore-key leaves a key of the state helper out when the writes are compared (e.g. a
+      marker the ref does not know).
 
 A run is emulated step by step (see Run): variables, conditions and loops are rendered by Home
 Assistant's own template engine (POST /api/template, which changes nothing); actions are never
@@ -29,6 +34,9 @@ from ha import HA
 
 ROOM = "blueprints/automation/weekheat_room.yaml"
 DAY = "blueprints/script/weekheat_day.yaml"
+EXERCISE = "blueprints/script/weekheat_exercise.yaml"
+# The script the room automations call for the valve exercise (their input's default).
+EXERCISE_SCRIPT = "script.weekheat_exercise"
 
 
 def blueprint_text(path: str, ref: str | None) -> str:
@@ -43,7 +51,8 @@ def blueprint_text(path: str, ref: str | None) -> str:
 def load_blueprint(text: str, inputs: dict) -> dict:
     """Parse a blueprint; each !input becomes the input's value, else the blueprint's default."""
     plain = yaml.safe_load(text.replace("!input ", ""))
-    defaults = {key: spec.get("default") for key, spec in plain["blueprint"]["input"].items()}
+    specs = plain["blueprint"].get("input") or {}
+    defaults = {key: spec.get("default") for key, spec in specs.items()}
 
     class Loader(yaml.SafeLoader):
         """A YAML loader that resolves !input."""
@@ -95,12 +104,15 @@ class Run:
 
     `responses(action, data, context)` gives an action's response; `overrides` replace variables
     where they are first defined (so that a scenario reaches a branch whatever the live states are).
+    `scripts` maps a script's entity id to its parsed blueprint: a call of it is emulated too, with
+    the call's data as its fields, and its calls follow the call's own.
     """
 
     def __init__(self, ha: HA, context: dict, responses, overrides: dict | None = None):
         """Start a run with these variables."""
         self.ha, self.context, self.responses = ha, dict(context), responses
         self.overrides = dict(overrides or {})
+        self.scripts = {}
         self.calls = []
 
     def steps(self, steps: list):
@@ -155,13 +167,19 @@ class Run:
         name = render(self.ha, step["action"], self.context)
         data = rendered(self.ha, {**step.get("target", {}), **step.get("data", {})}, self.context)
         self.calls.append([name, data])
+        if name in self.scripts:
+            self.calls += run_blueprint(self.ha, self.scripts[name], data, self.responses).calls
         if "response_variable" in step:
             self.context[step["response_variable"]] = self.responses(name, data, self.context)
 
 
-def run_blueprint(ha: HA, doc: dict, start: dict, responses, overrides=None) -> Run:
-    """Emulate a run of a blueprint (script or automation) from its top-level variables."""
+def run_blueprint(ha: HA, doc: dict, start: dict, responses, overrides=None, scripts=None) -> Run:
+    """Emulate a run of a blueprint (script or automation) from its top-level variables.
+
+    `scripts`: the scripts whose calls are emulated too (see Run).
+    """
     run = Run(ha, start, responses, overrides)
+    run.scripts = scripts or {}
     run.variables(doc.get("variables", {}))
     try:
         run.steps(doc.get("actions") or doc.get("sequence") or [])
@@ -181,12 +199,13 @@ def room_configs(ha: HA) -> list:
 
 
 def validate(ha: HA):
-    """Print HA's validate_config of both blueprints, with real inputs."""
-    configs = [(DAY, "config/script/config/weekheat_day")]
+    """Print HA's validate_config of the blueprints, with real inputs (none for the exercise)."""
+    configs = [(DAY, "config/script/config/weekheat_day"), (EXERCISE, None)]
     configs += [(ROOM, config) for config in room_configs(ha)]
     for path, config in configs:
-        inputs = ha.rest("GET", config)["use_blueprint"]["input"]
+        inputs = ha.rest("GET", config)["use_blueprint"]["input"] if config else {}
         doc = load_blueprint(blueprint_text(path, None), inputs)
+        config = config or path
         body = {"type": "validate_config", "actions": doc.get("actions") or doc.get("sequence")}
         if doc.get("triggers"):
             body["triggers"] = doc["triggers"]
@@ -306,65 +325,141 @@ def compare_day(ha: HA, ref: str, days: int):
 
 
 def room_scenarios(thermostats: list, now_m: int) -> dict:
-    """Return scenarios that reach each run mode: variables to set, by name."""
+    """Return scenarios that reach each run mode: variables to set, by name.
+
+    `state` is the stored state helper (see room_run); `trigger` the trigger's id (default tick).
+    """
     first, second = thermostats[0], thermostats[-1]
     both = {first: [23.0], second: [23.0]}
-    held = {first: [23.0], "_open": [23.0, 23.0], "_rc": 1}
+    held = {first: [23.0], "_open": [23.0, 23.0], "_rc": 1, "_rt": now_m - 30}
     window = {first: [23.0], "_open": [22.0, 21.0]}
     plain = {"open_now": False, "room_t": None, "switch_off": False, "now_m": now_m}
     return {
-        "plan": {**plain, "applied": {first: [20.0], second: [20.0]}},
-        "plan unchanged": {**plain, "applied": both, "wanted": 23.0},
-        "window opens": {**plain, "applied": {first: [23.0]}, "open_now": True},
-        "window held": {**plain, "applied": window, "open_now": True},
+        "plan": {**plain, "state": {first: [20.0], second: [20.0]}},
+        "plan unchanged": {**plain, "state": both, "wanted": 23.0},
+        "window opens": {**plain, "state": {first: [23.0]}, "open_now": True},
+        "window held": {**plain, "state": window, "open_now": True},
         "window held, new period": {
             **plain,
-            "applied": {**window, first: [18.0]},
+            "state": {**window, first: [18.0]},
             "wanted": 23.0,
             "open_now": True,
         },
-        "window closes": {**plain, "applied": {first: [23.0], "_open": [22.0, None]}},
-        "valves held, room warm": {**plain, "applied": {**held, "_rt": now_m - 30}, "room_t": 25.0},
-        "valves held, room cooled": {
-            **plain,
-            "applied": {**held, "_rt": now_m - 30},
-            "room_t": 22.5,
-        },
-        "valves held, too soon": {**plain, "applied": {**held, "_rt": now_m - 2}, "room_t": 22.5},
-        "valves close": {**plain, "applied": both, "wanted": 23.0, "room_t": 24.0},
-        "heating off": {**plain, "applied": window, "switch_off": True},
-        "gap in the plan": {**plain, "applied": {first: [23.0]}, "wanted": None},
+        "window closes": {**plain, "state": {first: [23.0], "_open": [22.0, None]}},
+        "valves held, room warm": {**plain, "state": held, "room_t": 25.0},
+        "valves held, room cooled": {**plain, "state": held, "room_t": 22.5},
+        "valves held, too soon": {**plain, "state": {**held, "_rt": now_m - 2}, "room_t": 22.5},
+        "valves close": {**plain, "state": both, "wanted": 23.0, "room_t": 24.0},
+        "heating off": {**plain, "state": window, "switch_off": True},
+        "gap in the plan": {**plain, "state": {first: [23.0]}, "wanted": None},
+        **changed_scenarios(plain, window, held),
+        **exercise_scenarios(plain, both),
     }
 
 
-def room_run(ha: HA, doc: dict, overrides: dict) -> Run:
-    """Emulate a 15-minute tick of a room, with its day script answering a plain Wednesday."""
+def changed_scenarios(plain: dict, window: dict, held: dict) -> dict:
+    """Return scenarios of a room held while its thermostats were changed (review L8).
+
+    The saved setpoints carry the fingerprint of their thermostat list (_th); -1 is never the
+    current one. With the right fingerprint (th_print set to match), a held room runs as before.
+    """
+    moved = {"_th": -1}
+    same = {**plain, "state": {**window, "_th": 4242}, "th_print": 4242}
+    return {
+        "changed, window closed": {**plain, "state": {**window, **moved}, "wanted": 23.0},
+        "changed, window open": {
+            **plain,
+            "state": {**window, **moved},
+            "wanted": 23.0,
+            "open_now": True,
+        },
+        "changed, valves held": {
+            **plain,
+            "state": {**held, **moved},
+            "wanted": 23.0,
+            "room_t": 25.0,
+        },
+        "changed, heating off": {**plain, "state": {**window, **moved}, "switch_off": True},
+        "unchanged, window closed": same,
+        "unchanged, window held": {**same, "open_now": True},
+    }
+
+
+def exercise_scenarios(plain: dict, both: dict) -> dict:
+    """Return scenarios of the valve exercise (Run now), with and without its script."""
+    run = {**plain, "state": both, "wanted": 23.0, "trigger": "exercise_now"}
+    return {
+        "exercise": {**run, "ex_ready": True},
+        "exercise, no script": {**run, "ex_ready": False},
+    }
+
+
+def defines(doc: dict, name: str) -> bool:
+    """Return whether a top-level step of a blueprint's actions sets a variable of this name."""
+    steps = doc.get("actions") or doc.get("sequence") or []
+    return any(name in step.get("variables", {}) for step in steps)
+
+
+def room_run(ha: HA, doc: dict, scenario: dict, scripts: dict) -> Run:
+    """Emulate a run of a room, with its day script answering a plain Wednesday.
+
+    The scenario's `state` replaces the stored state: `stored` where the version reads it so,
+    else `applied` (releases before 0.14 read the state straight into it).
+    """
     day_info = {"days": [{"weekday": "wed", "free": False, "plan": None, "kind": "plain"}]}
 
     def answer(action, data, context):
         """Answer the day script call; nothing else answers."""
         return day_info if action.startswith("script.") else None
 
-    start = {"trigger": {"id": "tick", "entity_id": None}, "this": {"entity_id": "automation.x"}}
-    return run_blueprint(ha, doc, start, answer, overrides)
+    overrides = dict(scenario)
+    trigger = {"id": overrides.pop("trigger", "tick"), "entity_id": None, "event": {"data": {}}}
+    if "state" in overrides:
+        overrides["stored" if defines(doc, "stored") else "applied"] = overrides.pop("state")
+    start = {"trigger": trigger, "this": {"entity_id": "automation.x"}}
+    return run_blueprint(ha, doc, start, answer, overrides, scripts)
 
 
-def compare_scenario(ha: HA, versions: tuple, scenario: tuple) -> tuple:
+def writes(calls: list, ignore: list) -> list:
+    """Return the calls that change something, with the ignored keys left out of state values.
+
+    Script calls are left out (the day script only answers; the exercise script's own calls are
+    in the list), and so is dismissing a notification (dismissing none changes nothing).
+    """
+    kept = []
+    for name, data in calls:
+        if name.startswith("script.") or name == "persistent_notification.dismiss":
+            continue
+        if name == "input_text.set_value" and ignore:
+            value = data["value"]
+            value = json.loads(value) if isinstance(value, str) else value
+            data = {**data, "value": {k: v for k, v in value.items() if k not in ignore}}
+        kept.append([name, data])
+    return kept
+
+
+def compare_scenario(ha: HA, setup: tuple, scenario: tuple) -> tuple:
     """Return a scenario's mode, the variables that differ, and the writes of both versions."""
+    versions, scripts, ignore = setup
     name, overrides = scenario
-    a, b = (room_run(ha, doc, overrides) for doc in versions)
+    a, b = (room_run(ha, doc, overrides, scripts) for doc in versions)
     differ = [key for key in a.context if key in b.context and a.context[key] != b.context[key]]
-    return name, b.context.get("mode"), differ, (a.calls, b.calls)
+    return name, b.context.get("mode"), differ, (writes(a.calls, ignore), writes(b.calls, ignore))
 
 
-def compare_room(ha: HA, ref: str, room: str):
-    """Print whether the room blueprint of `ref` and of the working copy agree in each scenario."""
+def compare_room(ha: HA, ref: str, room: str, ignore: list):
+    """Print whether the room blueprint of `ref` and of the working copy agree in each scenario.
+
+    Both versions call the working copy's exercise script (a ref before 0.14 has none).
+    """
     inputs = ha.rest("GET", f"config/automation/config/{room}")["use_blueprint"]["input"]
     versions = tuple(load_blueprint(blueprint_text(ROOM, r), inputs) for r in (ref, None))
+    scripts = {EXERCISE_SCRIPT: load_blueprint(blueprint_text(EXERCISE, None), {})}
     now_m = int(datetime.datetime.now().timestamp() // 60)
     scenarios = room_scenarios(as_list(inputs["thermostats"]), now_m)
+    setup = (versions, scripts, ignore)
     with ThreadPoolExecutor(6) as pool:
-        results = pool.map(lambda item: compare_scenario(ha, versions, item), scenarios.items())
+        results = pool.map(lambda item: compare_scenario(ha, setup, item), scenarios.items())
         for name, mode, differ, (old_calls, new_calls) in results:
             same = old_calls == new_calls
             print(f"{name:26} mode {mode!s:8} differ: {differ or 'none'}; writes same: {same}")
@@ -379,6 +474,9 @@ def main():
     parser.add_argument("--ref", default="v0.13.0", help="the git ref to compare with")
     parser.add_argument("--days", type=int, default=120, help="day: how many days")
     parser.add_argument("--room", default="weekheat_wohnzimmer", help="room: the automation id")
+    parser.add_argument(
+        "--ignore-key", action="append", default=[], help="room: a state key not to compare"
+    )
     args = parser.parse_args()
     ha = HA()
     if args.check == "validate":
@@ -386,7 +484,7 @@ def main():
     elif args.check == "day":
         compare_day(ha, args.ref, args.days)
     else:
-        compare_room(ha, args.ref, args.room)
+        compare_room(ha, args.ref, args.room, args.ignore_key)
 
 
 if __name__ == "__main__":

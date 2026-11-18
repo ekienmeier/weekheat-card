@@ -19,6 +19,12 @@ When a point here is done, update its line in the review's status table and remo
   the 0.12.0 blueprints. Before any check against it, see what it runs: the card logs its version in
   the browser console ("WEEKHEAT 0.13.0"); `python3 tools/ha.py ws '{"type": "blueprint/list",
   "domain": "automation"}'` shows the blueprints' descriptions, which end with their release.
+- After 0.13.0 (not released yet): L8 and M17 changed the blueprints. The room blueprint stores a
+  fingerprint of its thermostats with saved setpoints (`_th`) and calls the new script blueprint
+  `blueprints/script/weekheat_exercise.yaml` for the valve exercise. The release that contains them
+  sets `BLUEPRINT_VERSION` and the marks of all three; its notes must say that the blueprints change
+  and that *Update now* also imports the exercise blueprint and creates `script.weekheat_exercise`
+  (without it, a room skips the exercise and raises a notification).
 
 ## How to work on this project
 
@@ -53,6 +59,9 @@ helpers, automations or blueprints without asking.
   `room` (a git ref against the working copy: same days, same values, same writes?). It emulates
   runs read-only. Use it for every blueprint change; for an intended change, its output shows
   exactly where the versions differ (against `v0.12.0` it finds the old timestamps, as a check).
+  `room` also runs the valve exercise (the exercise script's calls are emulated with its blueprint)
+  and thermostats changed while held; `--ignore-key _th` leaves the fingerprint out when comparing
+  with a release before it (against `v0.13.0`, only the *changed* and *no script* scenarios differ).
 
 **GitHub.** There is no `gh` CLI. The token is in `~/.config/weekheat/github_token`; use the REST
 API (curl or Python): workflow runs `GET /repos/ekienmeier/weekheat-card/actions/runs?head_sha=…`,
@@ -60,8 +69,8 @@ their jobs and logs, releases `POST /repos/ekienmeier/weekheat-card/releases` wi
 `name` both `vX.Y.Z`.
 
 **Releasing.** As the README's *Versioning* says: `VERSION` in `src/version.js`; when a blueprint
-changes also `BLUEPRINT_VERSION` and the mark at the end of both blueprints' descriptions (a test
-checks they match); `npm run build`; the README's status line (minor version only); a commit
+changes also `BLUEPRINT_VERSION` and the mark at the end of all three blueprints' descriptions (a
+test checks they match); `npm run build`; the README's status line (minor version only); a commit
 `… (x.y.z)`; tag; push; wait for CI on `main`; the GitHub release named like the tag, with short
 notes that say whether the blueprints must be updated (the card's *Update now*).
 
@@ -74,35 +83,14 @@ a template answer like `255` comes back as a number.
 
 Each says what is wrong, where, a way to fix it, how to check it, and what it means for the version.
 
-### 6. L8: saved setpoints are stored by position
-
-- **Problem.** While a window is open or the room sensor holds the valves closed, the state helper's
-  `_open` holds the setpoints to give back, as a list in thermostat order (a list to stay within 255
-  characters, see design.md *State helper*). If the room's thermostats are changed (added, removed,
-  reordered) while it is held, the values go back to the wrong thermostats.
-- **Options** (a decision for the owner; it changes the state format, which README's *Versioning*
-  ties to 1.0):
-  1. The blueprint also stores a short fingerprint of the thermostat list (e.g. the count and the
-     total length of their entity ids), and ignores `_open` when it no longer matches: the room then
-     returns to its plan. Cheap; catches nearly every change.
-  2. The card, when it saves new thermostats for a held room, rewrites `_open` in the new order. The
-     card would write the automation's state, which crosses the layers' responsibilities and can race
-     with a run.
-  3. `_open` as a map by entity id: exact, but costs an entity id per thermostat (see H1, `stateSize`).
-- **Note.** "Forget `_open` and let the next run decide" is not safe on its own: with the window still
-  open, the open branch would save the thermostats' current 5 °C as the values to give back.
-- **Check.** New scenarios in `tools/check_blueprints.py room` (thermostats changed while held);
-  `stateSize` and its tests if the format grows; design.md's *State helper* and *Run modes*.
-- **Version.** Minor, with a blueprint change (admins get *Update now*).
-
 ### 7. M18: automated tests of the blueprints
 
 - **Problem.** The blueprints' logic is checked only by hand: `tools/check_blueprints.py` against the
   live Home Assistant, and the live tests listed in design.md. Nothing runs in CI.
 - **Approach.** Python tests with `pytest-homeassistant-custom-component` (it pins a Home Assistant
-  version and gives a `hass` fixture): copy both blueprints into the test config, create the day
-  script and a room automation from them, register thermostat states with `hass.states.async_set`,
-  mock `climate.set_temperature`, `calendar.get_events` and `workday.check_date` with
+  version and gives a `hass` fixture): copy the three blueprints into the test config, create the
+  day and exercise scripts and a room automation from them, register thermostat states with
+  `hass.states.async_set`, mock `climate.set_temperature`, `calendar.get_events` and `workday.check_date` with
   `async_mock_service` (with responses), and drive time with `async_fire_time_changed`. Start with the
   cases in design.md's *Testing*: a period boundary, a manual change that holds, equal adjacent
   periods, midnight, a window opening and closing, the room sensor closing and releasing, the heating
@@ -112,15 +100,6 @@ Each says what is wrong, where, a way to fix it, how to check it, and what it me
   that the Node tests and the Python tests (rendering the blueprint's templates with HA's `Template`)
   both check.
 - **Version.** None (tests only).
-
-### 8. M17: the room blueprint is still one long run
-
-- **Problem.** About 420 lines of actions in one automation run; each template is short now, but the
-  file is long (one file per blueprint, guidelines 1.3).
-- **Option** (a decision for the owner): move the valve exercise into a script blueprint of its own,
-  called by the room automation. Smaller room blueprint, but a third blueprint to install; the card's
-  update banner (`src/ha/blueprints.js`, `blueprintStatus`) would have to know it.
-- **Version.** Minor, with blueprint changes.
 
 ### 9. Not planned: the default HACS store
 

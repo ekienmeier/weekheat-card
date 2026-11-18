@@ -2,10 +2,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPlan, loadPlans } from '../../src/ha/plans.js';
-import { blueprintStatus } from '../../src/ha/blueprints.js';
+import { blueprintStatus, updateBlueprints } from '../../src/ha/blueprints.js';
 import { triggerRooms } from '../../src/ha/controls.js';
 import { BLUEPRINT_VERSION } from '../../src/version.js';
-import { fakeGateway, sent } from './fake-gateway.mjs';
+import { fakeGateway, sent, services } from './fake-gateway.mjs';
 
 /** A schedule helper with 20 °C all day, and its registry entry. */
 const ITEM = {
@@ -66,19 +66,91 @@ test('createPlan names the entity after room and plan, unless that id is taken',
   );
 });
 
+/**
+ * A blueprint as `blueprint/list` lists it, marked with a release.
+ * @param {string} version
+ * @returns {any}
+ */
+const marked = (version) => ({ metadata: { description: `… Weekheat ${version}` } });
+
+/** The valve exercise script's state, as a script made from its blueprint has. */
+const EXERCISE_STATES = { 'script.weekheat_exercise': { state: 'off' } };
+
+/** The valve exercise blueprint as blueprintStatus lists it when it is missing. */
+const NO_EXERCISE = {
+  domain: 'script',
+  path: 'ekienmeier/weekheat_exercise.yaml',
+  file: 'weekheat_exercise.yaml',
+  installed: null,
+  current: false,
+  script: 'script.weekheat_exercise',
+};
+
+/**
+ * Home Assistant's blueprint lists, with the exercise blueprint marked with a release or missing.
+ * @param {string | null} exercise
+ * @returns {Record<string, any>}
+ */
+function blueprintLists(exercise) {
+  const scripts = { 'ekienmeier/weekheat_day.yaml': marked(BLUEPRINT_VERSION) };
+  if (exercise) scripts['ekienmeier/weekheat_exercise.yaml'] = marked(exercise);
+  return { automation: { 'ekienmeier/weekheat_room.yaml': marked('0.9.0') }, script: scripts };
+}
+
 test('blueprintStatus lists the blueprints older than the card needs', async () => {
-  const marked = (version) => ({ metadata: { description: `… Weekheat ${version}` } });
-  const lists = {
-    automation: { 'ekienmeier/weekheat_room.yaml': marked('0.9.0') },
-    script: { 'ekienmeier/weekheat_day.yaml': marked(BLUEPRINT_VERSION) },
-  };
-  const { old } = await blueprintStatus(fakeGateway({ ws: (message) => lists[message.domain] }));
+  const lists = blueprintLists(BLUEPRINT_VERSION);
+  const ws = (message) => lists[message.domain];
+  const { old } = await blueprintStatus(fakeGateway({ ws, states: EXERCISE_STATES }));
   const room = {
     domain: 'automation',
     path: 'ekienmeier/weekheat_room.yaml',
     file: 'weekheat_room.yaml',
   };
   assert.deepEqual(old, [{ ...room, installed: '0.9.0' }]);
+});
+
+test('blueprintStatus lists the exercise blueprint when it or its script is missing', async () => {
+  const status = async (lists, states) =>
+    (await blueprintStatus(fakeGateway({ ws: (message) => lists[message.domain], states }))).old;
+  assert.deepEqual((await status(blueprintLists(null), {}))[1], NO_EXERCISE);
+  const current = await status(blueprintLists(BLUEPRINT_VERSION), {});
+  assert.deepEqual(current[1], { ...NO_EXERCISE, installed: BLUEPRINT_VERSION, current: true });
+  const old = await status(blueprintLists('0.9.0'), EXERCISE_STATES);
+  assert.deepEqual(old[1], { ...NO_EXERCISE, installed: '0.9.0' });
+});
+
+/**
+ * A fake gateway whose blueprint/import answers with a blueprint's text.
+ * @param {Record<string, any>} [states]
+ * @returns {any}
+ */
+function importingGateway(states = {}) {
+  const ws = (message) => (message.type === 'blueprint/import' ? { raw_data: 'yaml' } : null);
+  return fakeGateway({ ws, states });
+}
+
+test('updateBlueprints creates the missing exercise script, from a current blueprint', async () => {
+  const gateway = importingGateway();
+  await updateBlueprints(gateway, [
+    { ...NO_EXERCISE, installed: BLUEPRINT_VERSION, current: true },
+  ]);
+  assert.deepEqual(sent(gateway, 'blueprint/save'), []);
+  const saved = gateway.calls.filter(([kind]) => kind === 'save');
+  assert.deepEqual(saved[0].slice(1), [
+    'script/config/weekheat_exercise',
+    {
+      alias: 'Weekheat valve exercise',
+      use_blueprint: { path: 'ekienmeier/weekheat_exercise.yaml', input: {} },
+    },
+  ]);
+});
+
+test('updateBlueprints saves a missing blueprint, and keeps a script that exists', async () => {
+  const gateway = importingGateway(EXERCISE_STATES);
+  await updateBlueprints(gateway, [NO_EXERCISE]);
+  assert.equal(sent(gateway, 'blueprint/save')[0].path, 'ekienmeier/weekheat_exercise');
+  assert.deepEqual(services(gateway), ['automation.reload', 'script.reload']);
+  assert.equal(gateway.calls.filter(([kind]) => kind === 'save').length, 0);
 });
 
 test('triggerRooms runs only the active room automations', async () => {

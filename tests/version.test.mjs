@@ -13,6 +13,7 @@ test('the blueprints carry the version the card expects', async () => {
   for (const file of [
     'blueprints/automation/weekheat_room.yaml',
     'blueprints/script/weekheat_day.yaml',
+    'blueprints/script/weekheat_exercise.yaml',
   ]) {
     const yaml = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
     assert.equal(blueprintVersion(yaml.split('\n  domain:')[0]), BLUEPRINT_VERSION, file);

@@ -157,6 +157,7 @@ export default {
     'Only needed for thermostats that ignore a linked sensor or overshoot, e.g. the Aqara W600. Thermostats that control well do not need it.',
   bp_old: 'The Weekheat blueprints are older than the card ({installed} → {needed}).',
   bp_none: 'no version',
+  bp_no_exercise: 'The script for the valve exercise is missing.',
   bp_update: 'Update now',
   err_room_name: 'The name needs at least one letter or digit.',
   err_room_exists: 'A room with this name exists already (automation {id}).',

@@ -79,11 +79,26 @@ export const STATE_MAX = 255;
 /** The device classes of binary sensors that can be a room's windows and doors. */
 export const WINDOW_CLASSES = ['window', 'door', 'opening', 'garage_door'];
 
-/** The file names of the two blueprints, as they end the paths Home Assistant lists. */
+/** The file names of the three blueprints, as they end the paths Home Assistant lists. */
 export const ROOM_BLUEPRINT = 'weekheat_room.yaml';
 
 /** See ROOM_BLUEPRINT. */
 export const DAY_BLUEPRINT = 'weekheat_day.yaml';
+
+/** See ROOM_BLUEPRINT: the valve exercise script, which the room automations call. */
+export const EXERCISE_BLUEPRINT = 'weekheat_exercise.yaml';
+
+/**
+ * The script the room automations call for the valve exercise: their `exercise_script` input's
+ * default in the room blueprint.
+ */
+export const EXERCISE_SCRIPT = 'script.weekheat_exercise';
+
+/** The name the card gives the valve exercise script when it creates it (as the blueprint's). */
+export const EXERCISE_ALIAS = 'Weekheat valve exercise';
+
+/** The folder of Home Assistant's blueprints that importing them from GitHub gives. */
+export const BLUEPRINT_FOLDER = 'ekienmeier';
 
 /** Where the blueprints are published; a tag or `main` follows. */
 export const BLUEPRINT_REPO = 'https://github.com/ekienmeier/weekheat-card/blob/';

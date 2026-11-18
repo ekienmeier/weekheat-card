@@ -18,7 +18,7 @@ Assistant, modelled on [Temperate](https://github.com/xman2000/temperate-card):
 - At the start of each period, the room's thermostats are set to its temperature. A change made by
   hand (thermostat knob, vendor app, HA dashboard) holds until the next period.
 - An Off period is a low setpoint (default 5 °C), never HVAC off, so frost protection stays.
-- Runs entirely inside HA (a script, automations, helpers). The card edits and shows; nothing depends
+- Runs entirely inside HA (scripts, automations, helpers). The card edits and shows; nothing depends
   on a dashboard being open.
 
 Not in scope for now: heat/cool, presence. Open windows: see *Windows and doors*; a room sensor: see
@@ -30,6 +30,7 @@ Not in scope for now: heat/cool, presence. Open windows: see *Windows and doors*
 |---|---|---|
 | `weekheat_day` | **Script blueprint**: decides working day / free day for one or more dates, and why | home |
 | `weekheat_room` | **Automation blueprint**: a room. Its inputs are the room's whole configuration | room |
+| `weekheat_exercise` | **Script blueprint**: the valve exercise of some thermostats, called by the rooms | home |
 | `weekheat-card` | Dashboard card (HACS): rooms, plan editor, week, day preview, exceptions, settings | dashboard |
 | Plans | One `schedule` helper per named plan | plan |
 | State | One `input_text` per room: what was last applied (runtime only) | room |
@@ -172,6 +173,7 @@ One automation per room, made from `weekheat_room`.
 | Week, free-day plan | see above (plans referred to by their slug) |
 | State helper | `input_text.weekheat_<room>_state` |
 | Day script | `script.weekheat_day` |
+| Valve exercise script | `script.weekheat_exercise` |
 | Settle time | default 30 s |
 
 ### Core rule: write when the scheduled temperature changes
@@ -204,12 +206,14 @@ Consequences:
 
 ### Run modes
 
-Each run, after the valve exercise, decides one mode; the first that applies wins:
+Each run, after the valve exercise, decides one mode; the first that applies wins. Before that,
+setpoints saved for another list of thermostats (see *State helper*, `_th`) are dropped together with
+the last applied values, so that the room returns to its plan:
 
 | Mode | When | What it does |
 |---|---|---|
 | off | the heating switch is off | forgets a held window or valve state, writes `off_temp` like a plan value |
-| open | a window has been open for the delay, nothing saved yet | saves the setpoints in `_open`, writes `off_temp` |
+| open | a window has been open for the delay, nothing saved yet | saves the setpoints in `_open` (the plan's temperature if the saved ones were dropped), writes `off_temp` |
 | hold | a window is still open | writes nothing; a new period's temperature replaces the saved value |
 | rc | setpoints are saved and the room sensor has a value | valves held closed (`_rc`): released when the room is down to the highest saved setpoint (gives them back), else kept at `off_temp`; a new period or a setpoint by hand (`by_hand_from` or more) replaces the saved value |
 | restore | setpoints are saved, all windows closed, no room sensor value | writes the saved setpoints back |
@@ -238,6 +242,25 @@ While a window is open it also holds `"_open"`: the setpoints to restore, as a l
 `"_open"` is there too, plus `"_rc": 1`; `"_rt"` is the time of the room sensor's last switch (minutes
 since the epoch). During the valve exercise, `"_ex": 1`.
 
+**Thermostats changed while held** (review L8, after 0.13.0). With `"_open"` the state also holds
+`"_th"`, a fingerprint of the thermostat list in its order (`th_print`: a polynomial hash of the entity
+ids' characters, below 999983, so at most 6 digits). A run whose list has another fingerprint (a
+thermostat added, removed, replaced or moved while a window was open or the valves were held) does not
+give the saved setpoints back to the wrong thermostats: it drops `_open`, `_rc` and the per-thermostat
+values (only `_rt` stays), and the room returns to its plan:
+
+| When the fingerprint differs | The run |
+|---|---|
+| windows closed, no room sensor | *plan*: writes the plan's temperature to every thermostat |
+| a window still open | *open*: saves the **plan's temperature** for every thermostat (not the 5 °C they have), writes 5 °C; closing gives the plan's temperature back |
+| room sensor, room still warm | *plan*, then *close* (once the hold time has passed): saves the plan's temperature, writes 5 °C |
+| heating switch off | *off*: writes 5 °C, as always |
+
+A state saved before `_th` existed counts as saved for the current list, so an update does not drop a
+held room's setpoints. Until the next run (the card runs the room after saving its thermostats; a
+change in HA's automation editor waits for the next trigger, at most 15 minutes), the card shows the
+saved setpoints by position. Changes made by hand before the window opened are lost in this case.
+
 **Size.** Home Assistant drops a value longer than the helper's maximum with only a warning in the log.
 The room would then rewrite its setpoints on every run (a change by hand no longer holds), and after a
 window closes it would have nothing to restore. Since 0.12.1:
@@ -246,7 +269,8 @@ window closes it would have nothing to restore. Since 0.12.1:
   when it reads the state, so an old state gets shorter on its next save.
 - The card refuses a room whose worst case (`stateSize`: every thermostat, all markers set) exceeds
   255 characters, when adding a room or saving its thermostats. Entity ids (with `climate.`) may then
-  be up to 91 characters long for two thermostats, 56 for three, 38 for four, 27 for five.
+  be up to 85 characters long for two thermostats, 51 for three, 35 for four, 25 for five (since `_th`;
+  before, 91, 56, 38 and 27).
 - The automation checks the length before saving. A state that does not fit is not saved, and a
   persistent notification `weekheat_<room>_state` says so (the card shows it as a banner). The valve
   exercise's `_ex` marker is left out if it would not fit.
@@ -320,11 +344,15 @@ by hand released at once (24 °C kept); 10 °C by hand then closed at the 06:15 
 
 HACS installs only the card; blueprints are copies in HA that nothing updates. So each blueprint ends its
 description with the release it belongs to (`Weekheat 0.12.0`), and the card has `BLUEPRINT_VERSION`,
-the release whose blueprints it needs (it changes only when a release changes them; a test checks both
-match). An admin's card compares them (`blueprint/list`) and, when older or unmarked, offers *Update
+the release whose blueprints it needs (it changes only when a release changes them; a test checks all
+three match). An admin's card compares them (`blueprint/list`) and, when older or unmarked, offers *Update
 now*: `blueprint/import` of the file at the card's tag (`…/blob/v0.12.0/…`, not `main`), `blueprint/save`
 over the installed copy (source URL `main`, so HA's own re-import still works), then reloading
-automations and scripts. A banner rather than silent: it changes how the rooms behave.
+automations and scripts. A banner rather than silent: it changes how the rooms behave. The valve
+exercise blueprint is also offered when it is missing (it came after 0.13.0; saved as
+`ekienmeier/weekheat_exercise.yaml`), and when `script.weekheat_exercise` is missing (the banner then
+says only that); *Update now* then creates that script (`config/script/config/weekheat_exercise`,
+`use_blueprint` with no inputs). A missing room or day blueprint is not the card's to install.
 
 ### Home Assistant down
 
@@ -350,6 +378,18 @@ the automation run, so the normal run that follows writes a new period's tempera
 between. The automation is queued, so window, plan and switch events wait for it. While it runs, the
 state helper carries `_ex` and the card shows the room as *Valve exercise*. One wait for all models: the
 W600 moves slowly and quietly, 60 s is a guess, hence configurable. Paused rooms are not exercised.
+
+**A script of its own** (review M17, after 0.13.0). The exercise itself is the script blueprint
+`weekheat_exercise` (one script for the home, `script.weekheat_exercise`, no inputs; mode `parallel`,
+since every room calls it at the same time). Its fields are `thermostats`, `wait` and `settle_time`; it
+leaves out unavailable thermostats, moves the valves, gives back setpoints and modes, and returns once
+they report their setpoints again (or after the settle time). The room automation keeps the triggers,
+the `_ex` marker and the state: it marks the room, calls the script (its input `exercise_script`) and
+waits for it, then writes the state from before. If the script does not exist (`has_value`: a missing
+script cannot be called, and `continue_on_error` does not cover that), the room skips the exercise,
+raises the notification `weekheat_<room>_exercise` (the card shows it as a banner), and runs on as
+usual; the next exercise that runs dismisses it. The card's *Update now* imports the blueprint when it
+is missing and creates the script when there is none.
 
 Valve calibration (the thermostat learning its end positions) is not reachable from HA: over HomeKit
 the Aqara thermostats expose only setpoint, mode, temperature, battery and identify. It stays in the
@@ -411,7 +451,8 @@ titles (`Working day`, `Free day`) are read too. Writing uses `calendar.create_e
   Assistant's own frontend does (`src/domain/formatting.js`); a 12-hour clock writes "6:30 AM".
   Time inputs keep the browser's format, and dates still follow the card's language.
 - **Banners**: HA was down (above), a state helper too short (see *State helper*), the day script
-  missing, blueprints older than the card (with *Update now*), and why the card could not load.
+  missing, blueprints older than the card or the valve exercise script missing (with *Update now*), a
+  valve exercise skipped, and why the card could not load.
 
 **Admin rights:** creating and editing helpers, scripts and automations is admin-only in HA. So
 editing plans, the week, settings and rooms needs an admin user. Other users see everything, set
