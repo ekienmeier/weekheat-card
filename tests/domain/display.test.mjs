@@ -11,12 +11,19 @@ import {
 import { DIAL, dialAngle, dialPoint, dialValue, sliderValue } from '../../src/domain/dial.js';
 import { pickCandidates, pickKind } from '../../src/domain/picker.js';
 import { blueprintVersion, olderVersion } from '../../src/domain/versions.js';
+import { formattingOf } from '../../src/domain/formatting.js';
 import { textsFor } from '../../src/i18n/text.js';
 
+/** How a German and an English user write numbers, with Home Assistant's default settings. */
+const DE = formattingOf({ language: 'de', number_format: 'language' }, 'en');
+
+/** See DE. */
+const EN = formattingOf({ language: 'en', number_format: 'language' }, 'en');
+
 test('temperatures, periods and reasons in both languages', () => {
-  assert.equal(formatTemp(20.5, 'de'), '20,5 °C');
-  assert.equal(formatTemp(null, 'de'), '–');
-  assert.equal(formatPeriod({ off: true, temperature: 5 }, 'de', textsFor('de')), 'Aus');
+  assert.equal(formatTemp(20.5, DE), '20,5 °C');
+  assert.equal(formatTemp(null, DE), '–');
+  assert.equal(formatPeriod({ off: true, temperature: 5 }, DE, textsFor('de')), 'Aus');
   const holiday = { kind: 'holiday', detail: 'Mariä Empfängnis' };
   assert.equal(reasonText(holiday, textsFor('de')), 'Feiertag: Mariä Empfängnis');
   assert.equal(reasonText({ kind: 'weekend', weekday: 'sat' }, textsFor('en')), 'Saturday');
@@ -25,10 +32,10 @@ test('temperatures, periods and reasons in both languages', () => {
 });
 
 test('targetsText shows one value, or each when they differ; count picks the word', () => {
-  assert.equal(targetsText([20, 20], 'de'), '20 °C');
-  assert.equal(targetsText([18, 22.5], 'de'), '18 / 22,5 °C');
-  assert.equal(targetsText([18, null, 22], 'en'), '18 / 22 °C');
-  assert.equal(targetsText([], 'de'), '–');
+  assert.equal(targetsText([20, 20], DE), '20 °C');
+  assert.equal(targetsText([18, 22.5], DE), '18 / 22,5 °C');
+  assert.equal(targetsText([18, null, 22], EN), '18 / 22 °C');
+  assert.equal(targetsText([], DE), '–');
   assert.equal(count(1, ['Regel', 'Regeln']), '1 Regel');
   assert.equal(count(0, ['Regel', 'Regeln']), '0 Regeln');
 });

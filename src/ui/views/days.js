@@ -2,7 +2,7 @@
 // each room uses), today and tomorrow named; a day opens its exception form.
 
 import { html, nothing } from 'lit';
-import { numberLocale, reasonText } from '../../domain/format.js';
+import { dateLocale, reasonText } from '../../domain/format.js';
 import { planForDay } from '../../domain/plans.js';
 import { addDays } from '../../domain/time.js';
 import { cancelDay, commitDay, editDay, toggleDay } from '../../state/actions/days.js';
@@ -19,7 +19,7 @@ function dayName(ctx, day) {
   const text = texts(ctx);
   const today = now(ctx).date;
   const names = { [today]: text.today, [addDays(today, 1)]: text.tomorrow };
-  const format = new Intl.DateTimeFormat(numberLocale(lang(ctx)), {
+  const format = new Intl.DateTimeFormat(dateLocale(lang(ctx)), {
     day: 'numeric',
     month: 'numeric',
   });

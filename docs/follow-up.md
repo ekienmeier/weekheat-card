@@ -74,42 +74,6 @@ a template answer like `255` comes back as a number.
 
 Each says what is wrong, where, a way to fix it, how to check it, and what it means for the version.
 
-### 3. L5: Home Assistant's number and time format
-
-- **Problem.** Numbers use `de-AT` or `en-GB` by the language (`numberLocale` in
-  `src/domain/format.js`); times are always 24-hour (`fromMin` in `src/domain/time.js`, used in
-  `src/ui/status.js`, `src/ui/views/control.js`, `plan-periods.js`, `chart.js`). The user's Home
-  Assistant settings are ignored.
-- **Approach.** Read `hass.locale` (`language`, `number_format`: language, system, comma_decimal,
-  decimal_comma, space_comma, none; `time_format`: language, system, 12, 24). Map them as Home
-  Assistant's own frontend does (comma_decimal → en-US, decimal_comma → de, space_comma → fr, system
-  → the browser's, language → the language). One `formatting(hass)` gives the number locale and
-  12/24 hours; `formatNumber`, `formatTemp` and a new `formatTime(minutes, …)` use it. Time inputs
-  keep the browser's format.
-- **Check.** Domain tests for each setting; screenshots unchanged with the owner's settings.
-- **Version.** Minor.
-
-### 4. L7: slugify differs from Home Assistant's for some letters
-
-- **Problem.** `slugify` in `src/domain/plans.js` removes accents and turns ß into ss, but Home
-  Assistant (python-slugify with unidecode) also transliterates letters such as ø, æ, œ, ł, đ, þ, ð.
-  The card's plan-name matching (`matchPlan`) and the blueprint's (`plan_hits`, HA's `slugify` filter)
-  can then disagree, and plan entity ids made by `createPlan` differ from what HA would make.
-- **Approach.** Render `{{ name | slugify }}` on Home Assistant (read-only) for a list of names with
-  such letters; put the pairs into a test table; add a small transliteration map before the NFKD step.
-- **Check.** The table test; the existing plan-matching tests.
-- **Version.** Patch.
-
-### 5. L12: a room's status is computed several times per render
-
-- **Problem.** `statusOf` (`src/state/selectors.js`) runs `roomStatus` on every call; one render of an
-  opened room with two thermostats calls it, `thermostatStatus` and `friendlyNames` many times.
-- **Approach.** Measure first (in the browser through `shoot.mjs` with `page.evaluate` and
-  `performance.now()`, or in Node with fake states). Only if it is noticeable: memoise per render, e.g.
-  a cache keyed by the `hass` object (a `WeakMap`) and a version number that `Store.update` increments.
-- **Check.** Tests unchanged; the measurement before and after.
-- **Version.** None or patch.
-
 ### 6. L8: saved setpoints are stored by position
 
 - **Problem.** While a window is open or the room sensor holds the valves closed, the state helper's

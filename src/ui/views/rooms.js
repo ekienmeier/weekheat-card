@@ -5,7 +5,7 @@ import { html, nothing } from 'lit';
 import { formatNumber } from '../../domain/format.js';
 import { showTab, showView, toggleRoom } from '../../state/actions/navigation.js';
 import { togglePower } from '../../state/actions/control.js';
-import { lang, statusOf, texts } from '../../state/selectors.js';
+import { formatting, statusOf, texts } from '../../state/selectors.js';
 import { lookOf, statusLine } from '../status.js';
 import { controlView } from './control.js';
 import { planView } from './plan.js';
@@ -40,7 +40,8 @@ function roomMain(ctx, room, status) {
 function roomHead(ctx, room, status) {
   const look = lookOf(status);
   const open = ctx.store.ui.openRoom === room.id;
-  const temperature = status.current != null ? `${formatNumber(status.current, lang(ctx))}°` : '–';
+  const temperature =
+    status.current != null ? `${formatNumber(status.current, formatting(ctx))}°` : '–';
   const chevron = open ? 'mdi:chevron-up' : 'mdi:chevron-down';
   const toggle = () => toggleRoom(ctx, room.id);
   return html`<button class="room-head" aria-expanded=${open} @click=${toggle}>

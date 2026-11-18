@@ -6,7 +6,7 @@ import { html, nothing } from 'lit';
 import { OFF_T } from '../../domain/constants.js';
 import { sliderPercent } from '../../domain/dial.js';
 import { formatTemp } from '../../domain/format.js';
-import { lang, scale, texts } from '../../state/selectors.js';
+import { formatting, scale, texts } from '../../state/selectors.js';
 import { sliderHandlers } from '../pointer.js';
 import { controlWord } from '../status.js';
 import { smallLines, valueText } from './dial.js';
@@ -75,7 +75,7 @@ function sliderBar(ctx, { status, value }) {
 export function sliderView(ctx, room, shown) {
   const on = sliderHandlers(ctx, room, shown.th);
   const { low, high } = scale(ctx);
-  const end = (value) => html`<span>${formatTemp(value, lang(ctx))}</span>`;
+  const end = (value) => html`<span>${formatTemp(value, formatting(ctx))}</span>`;
   const label = shown.status.label || texts(ctx).setpoint;
   return html`<div class="slider ${shown.framed ? 'framed' : ''}" tabindex="0" role="slider"
     aria-label=${label} aria-valuemin=${low} aria-valuemax=${high}

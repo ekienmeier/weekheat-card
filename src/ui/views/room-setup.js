@@ -15,7 +15,7 @@ import {
   unpick,
 } from '../../state/actions/room-setup.js';
 import { setupDraft } from '../../state/drafts.js';
-import { areaOf, lang, texts } from '../../state/selectors.js';
+import { areaOf, formatting, texts } from '../../state/selectors.js';
 import { button, numberField, textField } from './parts.js';
 import { pickerView } from './picker.js';
 
@@ -105,7 +105,7 @@ function windowsBody(ctx, room) {
 function marginText(ctx, room) {
   const typed = String(setupDraft(ctx, room).room_margin).replace(',', '.');
   const margin = Number(typed) || LIMITS.room_margin.initial;
-  return `${formatNumber(margin, lang(ctx), { min: 1, max: 1 })} °C`;
+  return `${formatNumber(margin, formatting(ctx), { min: 1, max: 1 })} °C`;
 }
 
 /**
@@ -118,7 +118,7 @@ function marginText(ctx, room) {
 function sensorEntry(ctx, room, sensor) {
   const name = nameOf(ctx, sensor);
   const value = Number(ctx.gateway.states[sensor]?.state);
-  const shown = formatTemp(value, lang(ctx));
+  const shown = formatTemp(value, formatting(ctx));
   const temperature = Number.isNaN(value) ? nothing : html` <span class="dim">· ${shown}</span>`;
   const remove = () => unpick(ctx, room, { kind: 'rs', entity: sensor });
   return html`<div class="entry"><ha-icon icon="mdi:thermometer"></ha-icon>

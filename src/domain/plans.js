@@ -14,16 +14,56 @@
  */
 
 /**
- * Lower-case ASCII words joined by "_", like Home Assistant's slugify for Latin letters with
- * accents and ß. (Home Assistant also transliterates letters such as ø and ł; this does not.)
+ * Latin letters that Home Assistant's slugify (python-slugify with unidecode) spells with other
+ * letters, and that Unicode's NFKD leaves whole (it only splits off accents and ligatures). Read
+ * from `{{ name | slugify }}` on Home Assistant 2026.11; tests/domain/plans.test.mjs has the pairs.
+ */
+const TRANSLITERATION = {
+  ß: 'ss',
+  ẞ: 'ss',
+  æ: 'ae',
+  Æ: 'ae',
+  œ: 'oe',
+  Œ: 'oe',
+  ø: 'o',
+  Ø: 'o',
+  ł: 'l',
+  Ł: 'l',
+  đ: 'd',
+  Đ: 'd',
+  ð: 'd',
+  Ð: 'd',
+  þ: 'th',
+  Þ: 'th',
+  ħ: 'h',
+  Ħ: 'h',
+  ŧ: 't',
+  Ŧ: 't',
+  ŋ: 'ng',
+  Ŋ: 'ng',
+  ı: 'i',
+  ĸ: 'k',
+};
+
+/** Any letter of TRANSLITERATION. */
+const TRANSLITERATED = new RegExp(`[${Object.keys(TRANSLITERATION).join('')}]`, 'g');
+
+/** The accents NFKD splits off: Unicode's combining diacritical marks. */
+const ACCENTS = /[\u0300-\u036f]/g;
+
+/**
+ * Lower-case ASCII words joined by "_", like Home Assistant's slugify for Latin letters: accents
+ * are removed, and letters such as ß, ø, æ and þ are spelled out (TRANSLITERATION). Other scripts
+ * (Greek, Cyrillic), which Home Assistant transliterates too, are dropped here.
+ * The room blueprint matches plan names with Home Assistant's `slugify` filter (`plan_hits`).
  * @param {string} text
  * @returns {string}
  */
 export function slugify(text) {
   return String(text)
-    .replace(/ß/g, 'ss')
+    .replace(TRANSLITERATED, (letter) => TRANSLITERATION[letter])
     .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(ACCENTS, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');

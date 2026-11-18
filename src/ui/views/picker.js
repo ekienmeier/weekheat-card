@@ -5,7 +5,7 @@ import { ref } from 'lit/directives/ref.js';
 import { formatTemp } from '../../domain/format.js';
 import { pickCandidates } from '../../domain/picker.js';
 import { pick, searchEntities } from '../../state/actions/room-setup.js';
-import { areaOf, lang, texts } from '../../state/selectors.js';
+import { areaOf, formatting, texts } from '../../state/selectors.js';
 
 /** How many entities each group shows before it asks for a narrower search. */
 const SHOWN = 8;
@@ -41,7 +41,7 @@ function focusOnce(field) {
 function temperatureOf(ctx, kind, state) {
   const value = kind === 'rs' ? Number(state.state) : state.attributes.current_temperature;
   if (kind === 'win' || typeof value !== 'number' || Number.isNaN(value)) return nothing;
-  return html` <span class="dim">· ${formatTemp(value, lang(ctx))}</span>`;
+  return html` <span class="dim">· ${formatTemp(value, formatting(ctx))}</span>`;
 }
 
 /**
