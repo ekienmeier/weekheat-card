@@ -19,8 +19,16 @@ def deploy(ha: HA, name: str):
     path = Path(name).resolve()
     domain = path.parent.name
     source = REPO + path.relative_to(ROOT).as_posix()
-    ha.ws({"type": "blueprint/save", "domain": domain, "path": f"ekienmeier/{path.name}",
-           "yaml": path.read_text(), "source_url": source, "allow_override": True})
+    ha.ws(
+        {
+            "type": "blueprint/save",
+            "domain": domain,
+            "path": f"ekienmeier/{path.name}",
+            "yaml": path.read_text(),
+            "source_url": source,
+            "allow_override": True,
+        }
+    )
     print(f"saved {domain}/ekienmeier/{path.name}")
 
 
