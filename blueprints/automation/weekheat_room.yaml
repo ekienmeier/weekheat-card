@@ -20,7 +20,7 @@ blueprint:
     least the margin above the setpoint, and gives the setpoint back once the room has
     cooled down to it. A workaround for thermostats that ignore a linked sensor or
     overshoot (e.g. the Aqara W600); not needed for ones that control well.
-    Pairs with the Weekheat card (custom:weekheat-card). Weekheat 0.12.0
+    Pairs with the Weekheat card (custom:weekheat-card). Weekheat 0.12.1
   domain: automation
   source_url: https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/automation/weekheat_room.yaml
   input:
@@ -206,6 +206,9 @@ variables:
   room_sensor: !input room_sensor
   room_margin: !input room_margin
   room_hold: !input room_hold
+  # The most characters the state helper holds (its max, at most 255). A longer state is not saved
+  # but reported, see the end.
+  state_max: "{{ state_attr(state_entity, 'max') | int(255) }}"
 
 triggers:
   - trigger: state
@@ -286,12 +289,16 @@ actions:
             {{ s | from_json if s.startswith('{') else {} }}
       - condition: template
         value_template: "{{ ex_th | length > 0 }}"
-      # Marks the room for the card while it runs.
-      - action: input_text.set_value
-        target:
-          entity_id: !input state
-        data:
-          value: "{{ dict(ex_state, _ex=1) | to_json }}"
+      # Marks the room for the card while it runs (left out if the state would get too long).
+      - if:
+          - condition: template
+            value_template: "{{ (dict(ex_state, _ex=1) | to_json | length) <= state_max }}"
+        then:
+          - action: input_text.set_value
+            target:
+              entity_id: !input state
+            data:
+              value: "{{ dict(ex_state, _ex=1) | to_json }}"
       - if:
           - condition: template
             value_template: "{{ ex_list | selectattr(2, 'eq', 'off') | list | length > 0 }}"
@@ -364,16 +371,29 @@ actions:
   - variables:
       day: "{{ day_info.days[0] }}"
       plan_list: "{{ [plans] if plans is string else plans | list }}"
+      # The room's plans that the day's plan name (from an exception or a keyword rule) matches, in
+      # three lists: same name without the room name (compared as slugs), the entity id the card
+      # gives a plan of that name, and the entity id or name ends with it. Same rule as matchPlan
+      # in the card; keep both alike.
+      plan_hits: >-
+        {%- set want = (day.plan or '') | slugify -%}
+        {%- set prefix = (room_name | lower) ~ ' ' -%}
+        {%- set own = 'schedule.weekheat_' ~ (room_name | slugify) ~ '_' ~ want -%}
+        {%- set ns = namespace(label=[], own=[], ends=[]) -%}
+        {%- for p in plan_list if want -%}
+          {%- set fn = state_attr(p, 'friendly_name') or '' -%}
+          {%- set label = fn[(prefix | length):] if (fn | lower).startswith(prefix) else fn -%}
+          {%- set ns.label = ns.label + ([p] if (label | slugify) == want else []) -%}
+          {%- set ns.own = ns.own + ([p] if p == own else []) -%}
+          {%- set tail = p.endswith('_' ~ want) or (fn | lower).endswith(' ' ~ (day.plan | lower)) -%}
+          {%- set ns.ends = ns.ends + ([p] if tail else []) -%}
+        {%- endfor -%}
+        {{ {'exact': ns.label + ns.own, 'ends': ns.ends} }}
+      # An exact match first; a plan that only ends like the name, only if it is the only one
+      # ("Werktag" must not pick "Kurzer Werktag").
       named_plan: >-
-        {%- set ns = namespace(p=none) -%}
-        {%- if day.plan -%}
-          {%- set want = day.plan | lower -%}{%- set slug = day.plan | slugify -%}
-          {%- for p in plan_list if ns.p is none -%}
-            {%- set fn = (state_attr(p, 'friendly_name') or '') | lower -%}
-            {%- if p.endswith('_' ~ slug) or fn == want or fn.endswith(' ' ~ want) -%}{%- set ns.p = p -%}{%- endif -%}
-          {%- endfor -%}
-        {%- endif -%}
-        {{ ns.p or '' }}
+        {{ plan_hits.exact[0] if plan_hits.exact
+           else (plan_hits.ends[0] if plan_hits.ends | length == 1 else '') }}
       plan: >-
         {%- if named_plan -%}{{ named_plan }}
         {%- elif day.free -%}{{ free_day }}
@@ -381,10 +401,16 @@ actions:
       wanted: >-
         {%- set t = state_attr(plan, 'temperature') -%}
         {{ t | float if is_state(plan, 'on') and t is number else none }}
+      # The state as stored: per thermostat [the last setpoint applied], plus the markers _open,
+      # _rc, _rt and _ex. Releases before 0.12.1 also stored a timestamp per thermostat; it is
+      # dropped here, so the state gets shorter on its next save.
       applied: >-
         {%- set s = states(state_entity) -%}
-        {{ s | from_json if s.startswith('{') else {} }}
-      stamp: "{{ now().strftime('%Y-%m-%dT%H:%M') }}"
+        {%- set ns = namespace(d={}) -%}
+        {%- for k, v in (s | from_json if s.startswith('{') else {}).items() -%}
+          {%- set ns.d = dict(ns.d, **{k: v[:1] if v is list and not k.startswith('_') else v}) -%}
+        {%- endfor -%}
+        {{ ns.d }}
       late: []
       targets: []
       th_list: "{{ [thermostats] if thermostats is string else thermostats | list }}"
@@ -432,7 +458,7 @@ actions:
             {{ ns.l }}
           applied: >-
             {%- set ns = namespace(a=applied) -%}
-            {%- if from_switch -%}{%- for th in th_list -%}{%- set ns.a = dict(ns.a, **{th: [wanted, stamp]}) -%}{%- endfor -%}{%- endif -%}
+            {%- if from_switch -%}{%- for th in th_list -%}{%- set ns.a = dict(ns.a, **{th: [wanted]}) -%}{%- endfor -%}{%- endif -%}
             {{ dict(ns.a, _open=saved) }}
           targets: >-
             {%- set ns = namespace(l=[]) -%}
@@ -453,7 +479,7 @@ actions:
               {%- set last = (applied.get(th) or [none])[0] -%}
               {%- set old = saved[loop.index0] if loop.index0 < saved | length else none -%}
               {%- if wanted is number and (last is not number or (last - wanted) | abs >= 0.05) -%}
-                {%- set ns.a = dict(ns.a, **{th: [wanted, stamp]}) -%}{%- set ns.s = ns.s + [wanted] -%}
+                {%- set ns.a = dict(ns.a, **{th: [wanted]}) -%}{%- set ns.s = ns.s + [wanted] -%}
               {%- else -%}{%- set ns.s = ns.s + [old] -%}{%- endif -%}
             {%- endfor -%}
             {{ {'a': ns.a, 's': ns.s} }}
@@ -500,7 +526,7 @@ actions:
               {%- set old = saved[loop.index0] if loop.index0 < saved | length else none -%}
               {%- set cur = state_attr(th, 'temperature') -%}
               {%- if wanted is number and (last is not number or (last - wanted) | abs >= 0.05) -%}
-                {%- set ns.a = dict(ns.a, **{th: [wanted, stamp]}) -%}{%- set ns.s = ns.s + [wanted] -%}
+                {%- set ns.a = dict(ns.a, **{th: [wanted]}) -%}{%- set ns.s = ns.s + [wanted] -%}
               {%- elif rc_held and states(th) not in ['off', 'unavailable', 'unknown'] and cur is number and cur >= 10 -%}
                 {%- set ns.s = ns.s + [cur | float] -%}{%- set ns.m = true -%}
               {%- else -%}{%- set ns.s = ns.s + [old] -%}{%- endif -%}
@@ -588,7 +614,7 @@ actions:
               mode: close
               applied: >-
                 {%- set ns = namespace(a=applied) -%}
-                {%- for it in targets -%}{%- set ns.a = dict(ns.a, **{it[0]: [it[1] | float, stamp]}) -%}{%- endfor -%}
+                {%- for it in targets -%}{%- set ns.a = dict(ns.a, **{it[0]: [it[1] | float]}) -%}{%- endfor -%}
                 {{ dict(ns.a, _open=eff, _rc=1, _rt=now_m) }}
               targets: >-
                 {%- set ns = namespace(l=[]) -%}
@@ -600,7 +626,9 @@ actions:
   # Window states are saved before writing, so the card shows them at once.
   - if:
       - condition: template
-        value_template: "{{ mode not in ['plan', 'off'] and (applied | to_json) != states(state_entity) }}"
+        value_template: >-
+          {{ mode not in ['plan', 'off'] and (applied | to_json) != states(state_entity)
+             and (applied | to_json | length) <= state_max }}
     then:
       - action: input_text.set_value
         target:
@@ -652,18 +680,36 @@ actions:
                   value_template: "{{ wait.completed and mode in ['plan', 'off'] }}"
               then:
                 - variables:
-                    applied: "{{ dict(applied, **{th: [temp, stamp]}) }}"
+                    applied: "{{ dict(applied, **{th: [temp]}) }}"
                     late: "{{ late + [state_attr(th, 'friendly_name') or th] if mode == 'plan' and trigger.id == 'start' and last is number else late }}"
 
+  # Save the state. One that is longer than the helper holds would be dropped with only a warning
+  # in the log, and the room would then rewrite its setpoints on every run: say so instead.
   - if:
       - condition: template
         value_template: "{{ (applied | to_json) != states(state_entity) }}"
     then:
-      - action: input_text.set_value
-        target:
-          entity_id: !input state
-        data:
-          value: "{{ applied | to_json }}"
+      - if:
+          - condition: template
+            value_template: "{{ (applied | to_json | length) <= state_max }}"
+        then:
+          - action: input_text.set_value
+            target:
+              entity_id: !input state
+            data:
+              value: "{{ applied | to_json }}"
+        else:
+          - action: persistent_notification.create
+            data:
+              notification_id: "weekheat_{{ room_name | slugify }}_state"
+              title: "Weekheat: {{ room_name }}"
+              message: >-
+                {%- set n = applied | to_json | length -%}
+                {%- if language == 'de' -%}
+                  Der Zustand braucht {{ n }} Zeichen, {{ state_entity }} fasst {{ state_max }}: zu viele Thermostate. Weniger Thermostate wählen oder ihnen kürzere Entity-IDs geben.
+                {%- else -%}
+                  The state needs {{ n }} characters, {{ state_entity }} holds {{ state_max }}: too many thermostats. Pick fewer thermostats, or give them shorter entity ids.
+                {%- endif -%}
 
   # Home Assistant was not running when the period started: say so.
   - if:

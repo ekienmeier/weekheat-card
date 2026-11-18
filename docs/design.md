@@ -115,8 +115,13 @@ Which plan a room uses on a date:
 - free day → the free-day plan;
 - working day → `week[weekday]`. Sat and Sun only matter when an exception makes them a working day;
 - a day with a plan name (from an exception or a keyword rule) → that plan, if the room has a plan of
-  that name (matched by slug, ignoring case); otherwise `week[weekday]`. So a "Homeoffice" event
-  switches only the rooms that have a Home office plan.
+  that name; otherwise `week[weekday]`. So a "Homeoffice" event switches only the rooms that have a
+  Home office plan. A plan has that name when (first match wins): its name without the room name has
+  the same slug (so case, accents and "-" vs " " don't matter); or its entity id is the one the card
+  gives a plan of that name (`schedule.weekheat_<room>_<slug>`, which still holds after a rename); or,
+  only if exactly one plan does, its entity id or name ends with it (e.g. after the room was
+  renamed). So "Werktag" never picks "Kurzer Werktag" (fixed in 0.12.1). The card (`matchPlan`) and
+  the room blueprint (`plan_hits`, `named_plan`) have the same rule.
 
 Example, home office mostly on Fridays: either the week assigns Fri → Home office and an office Friday
 gets an exception naming the Weekday plan, or the week keeps Fri → Weekday and a (recurring)
@@ -192,16 +197,29 @@ unavailable thermostat is retried at the next trigger. Mode `queued`.
 ### State helper
 
 `input_text.weekheat_<room>_state` (max 255 characters), compact JSON, per thermostat the last applied
-wanted temperature and when:
+wanted temperature:
 
 ```json
-{"climate.x": [21, "2026-11-13T06:00"], "climate.y": [21, "2026-11-13T06:00"]}
+{"climate.x": [21.0], "climate.y": [21.0]}
 ```
 
-Enough for 3–4 thermostats per room. While a window is open it also holds `"_open"`: the setpoints to
-restore, as a list in thermostat order (a list rather than a map to stay within 255 characters). While
-the room sensor holds the valves closed, `"_open"` is there too, plus `"_rc": 1`; `"_rt"` is the time of
-the room sensor's last switch (minutes since the epoch).
+While a window is open it also holds `"_open"`: the setpoints to restore, as a list in thermostat order
+(a list rather than a map to stay within 255 characters). While the room sensor holds the valves closed,
+`"_open"` is there too, plus `"_rc": 1`; `"_rt"` is the time of the room sensor's last switch (minutes
+since the epoch). During the valve exercise, `"_ex": 1`.
+
+**Size.** Home Assistant drops a value longer than the helper's maximum with only a warning in the log.
+The room would then rewrite its setpoints on every run (a change by hand no longer holds), and after a
+window closes it would have nothing to restore. Since 0.12.1:
+- Each thermostat takes about 10 characters plus its entity id. Before 0.12.1 each entry also had a
+  timestamp that nothing read (`[21, "2026-11-13T06:00"]`, 20 characters more); the automation drops it
+  when it reads the state, so an old state gets shorter on its next save.
+- The card refuses a room whose worst case (`stateSize`: every thermostat, all markers set) exceeds
+  255 characters, when adding a room or saving its thermostats. Entity ids (with `climate.`) may then
+  be up to 91 characters long for two thermostats, 56 for three, 38 for four, 27 for five.
+- The automation checks the length before saving. A state that does not fit is not saved, and a
+  persistent notification `weekheat_<room>_state` says so (the card shows it as a banner). The valve
+  exercise's `_ex` marker is left out if it would not fit.
 
 ### Windows and doors
 

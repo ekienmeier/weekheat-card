@@ -4,6 +4,7 @@ import {
   toMin, fromMin, nowIn, addDays, blocksToPeriods, periodsToBlocks, checkPeriods, periodAt, slugify,
   planLabel, matchPlan, planForDay, parseException, exceptionTitle, reasonText, fmtTemp, STARTER,
   roomFromInput, DIRECTORY_FIELDS, exerciseFromInput, pickKind, pickCandidates, count, targetsText, clampT, blueprintVersion, olderVersion, BLUEPRINT_VERSION, VERSION,
+  stateSize, STATE_MAX, fill, errorText, isNotFound, I18N,
 } from '../weekheat-card.js';
 
 test('time', () => {
@@ -64,9 +65,9 @@ test('plan names and matching', () => {
   const fr = { 'schedule.bad_werktag': 'Bad Werktag', 'schedule.bad_homeoffice': 'Bad Homeoffice', 'schedule.x': 'Bad Home office' };
   assert.equal(planLabel('Bad Werktag', 'Bad'), 'Werktag');
   assert.equal(planLabel('Werktag', 'Bad'), 'Werktag');
-  assert.equal(matchPlan('Homeoffice', plans, fr), 'schedule.bad_homeoffice');
-  assert.equal(matchPlan('home office', plans, fr), 'schedule.x');
-  assert.equal(matchPlan('Urlaub', plans, fr), null);
+  assert.equal(matchPlan('Homeoffice', plans, { friendly: fr, room: 'Bad' }), 'schedule.bad_homeoffice');
+  assert.equal(matchPlan('home office', plans, { friendly: fr, room: 'Bad' }), 'schedule.x');
+  assert.equal(matchPlan('Urlaub', plans, { friendly: fr, room: 'Bad' }), null);
   const room = { plans, free_day: 'schedule.x', week: { fri: 'schedule.bad_homeoffice' } };
   assert.equal(planForDay(room, { weekday: 'fri', free: false }, fr), 'schedule.bad_homeoffice');
   assert.equal(planForDay(room, { weekday: 'mon', free: false }, fr), 'schedule.bad_werktag');
@@ -188,4 +189,57 @@ test('the blueprints carry the version the card expects', async () => {
     const y = await readFile(new URL(`../${f}`, import.meta.url), 'utf8');
     assert.equal(blueprintVersion(y.split('\n  domain:')[0]), BLUEPRINT_VERSION, f);
   }
+});
+
+// Regression tests for the defects fixed in 0.12.1 (docs/review-2026-11-18.md, H1 and H2).
+
+test('a plan name picks the plan of exactly that name, not one that ends like it (H2)', () => {
+  const plans = ['schedule.weekheat_bad_kurzer_werktag', 'schedule.weekheat_bad_werktag'];
+  const friendly = { [plans[0]]: 'Bad Kurzer Werktag', [plans[1]]: 'Bad Werktag' };
+  assert.equal(matchPlan('Werktag', plans, { friendly, room: 'Bad' }), plans[1]);
+  const office = ['schedule.weekheat_bad_kein_homeoffice', 'schedule.weekheat_bad_homeoffice'];
+  assert.equal(matchPlan('Homeoffice', office, { room: 'Bad' }), office[1]);
+});
+
+test('a renamed plan is found by its name, then by the entity id the card gave it (H2)', () => {
+  const plans = ['schedule.weekheat_wohnzimmer_working_day', 'schedule.weekheat_wohnzimmer_free_day'];
+  const friendly = { [plans[0]]: 'Wohnzimmer Werktag', [plans[1]]: 'Wohnzimmer Wochenende' };
+  const room = 'Wohnzimmer';
+  assert.equal(matchPlan('Werktag', plans, { friendly, room }), plans[0]);
+  assert.equal(matchPlan('wochenende', plans, { friendly, room }), plans[1]);
+  assert.equal(matchPlan('Free day', plans, { friendly, room }), plans[1]);
+});
+
+test('a name that only ends like several plans picks none of them (H2)', () => {
+  const plans = ['schedule.bad_kurzer_werktag', 'schedule.bad_langer_werktag'];
+  assert.equal(matchPlan('Werktag', plans, { room: 'Badezimmer' }), null);
+  // ...but one such plan is still found, e.g. after the room was renamed
+  assert.equal(matchPlan('Werktag', ['schedule.bad_werktag', 'schedule.bad_frei'], { room: 'Badezimmer' }),
+    'schedule.bad_werktag');
+});
+
+test('the worst-case state fits four thermostats with long ids, but not six (H1)', () => {
+  const ids = (n) => Array.from({ length: n }, (_, i) => `climate.wohnzimmer_thermostat_nummer_${i}`);
+  assert.equal(stateSize([]), JSON.stringify({ _open: [], _rc: 1, _rt: 99999999, _ex: 1 }).length);
+  assert.ok(stateSize(ids(4)) <= STATE_MAX, String(stateSize(ids(4))));
+  assert.ok(stateSize(ids(6)) > STATE_MAX, String(stateSize(ids(6))));
+  // as the blueprint writes it: one setpoint per thermostat, no timestamp
+  const sample = JSON.stringify({ 'climate.a': [22.5], _open: [22.5], _rc: 1, _rt: 29916300, _ex: 1 });
+  assert.equal(stateSize(['climate.a']), sample.length);
+});
+
+test('the room blueprint no longer stores a timestamp per thermostat (H1)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const y = await readFile(new URL('../blueprints/automation/weekheat_room.yaml', import.meta.url), 'utf8');
+  assert.ok(!/\bstamp\b/.test(y), 'the room blueprint still mentions stamp');
+});
+
+test('texts: placeholders, error messages, both languages alike', () => {
+  assert.equal(fill('{size} of {max}, {other}', { size: 260, max: 255 }), '260 of 255, {other}');
+  assert.equal(errorText(new Error('boom')), 'boom');
+  assert.equal(errorText({ error: 'Response error: 500', status_code: 500, body: { message: 'x' } }), 'x');
+  assert.equal(errorText({ code: 'unknown_error', message: 'ws' }), 'ws');
+  assert.ok(isNotFound({ status_code: 404 }));
+  assert.ok(!isNotFound({ status_code: 500 }) && !isNotFound(undefined));
+  assert.deepEqual(Object.keys(I18N.de).sort(), Object.keys(I18N.en).sort());
 });

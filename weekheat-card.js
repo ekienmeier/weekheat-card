@@ -2,9 +2,9 @@
 // Pairs with the Weekheat blueprints (weekheat_day script, weekheat_room automation).
 // The first part (exported) is plain logic without DOM, tested in tests/logic.test.mjs.
 
-export const VERSION = '0.12.0';
+export const VERSION = '0.12.1';
 /** The blueprints that belong to this card: their release, marked at the end of their description. */
-export const BLUEPRINT_VERSION = '0.12.0';
+export const BLUEPRINT_VERSION = '0.12.1';
 export const BLUEPRINT_REPO = 'https://github.com/ekienmeier/weekheat-card/blob/';
 export const WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const SCHEDULE_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -32,6 +32,8 @@ export const MIN_T = 5;
 export const MAX_T = 30;
 export const OFF_T = 5;
 export const WINDOW_CLASSES = ['window', 'door', 'opening', 'garage_door'];
+/** The most characters a state helper (an input_text) can hold: Home Assistant's limit for a state. */
+export const STATE_MAX = 255;
 
 /** "1 Regel", "2 Regeln": `n` with the singular or plural of `[one, many]`. */
 export function count(n, [one, many]) {
@@ -62,6 +64,50 @@ export function olderVersion(a, b) {
   const pb = b.split('.').map(Number);
   for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] < pb[i];
   return false;
+}
+
+/**
+ * The most characters the room blueprint can need for a room's state helper: per thermostat the last
+ * setpoint it applied, the setpoints saved while a window is open or the valves are held closed, and
+ * the markers `_rc`, `_rt` and `_ex`. A room whose worst case exceeds STATE_MAX cannot keep its state.
+ * @param {string[]} thermostats the room's climate entity ids
+ * @returns {number} the length of the worst-case state as JSON
+ */
+export function stateSize(thermostats) {
+  const widest = 22.5; // the longest setpoint as JSON, 4 characters like null
+  const state = Object.fromEntries(thermostats.map((e) => [e, [widest]]));
+  const markers = { _open: thermostats.map(() => widest), _rc: 1, _rt: 99999999, _ex: 1 };
+  return JSON.stringify({ ...state, ...markers }).length;
+}
+
+/**
+ * A text with its `{name}` placeholders replaced by the matching values; unknown ones stay as they are.
+ * @param {string} text a text from I18N
+ * @param {Record<string, string | number>} values
+ * @returns {string}
+ */
+export function fill(text, values) {
+  return text.replace(/\{(\w+)\}/g, (all, key) => (key in values ? String(values[key]) : all));
+}
+
+/**
+ * A readable message for an error: `callApi` rejects with `{error, status_code, body}`, `callWS`
+ * with `{code, message}`, other code with an Error.
+ * @param {unknown} e
+ * @returns {string}
+ */
+export function errorText(e) {
+  if (!e || typeof e !== 'object') return String(e);
+  return e.message || e.body?.message || e.error || JSON.stringify(e);
+}
+
+/**
+ * Did a `callApi` request fail because what it asked for does not exist (HTTP 404)?
+ * @param {unknown} e the rejection of `hass.callApi`
+ * @returns {boolean}
+ */
+export function isNotFound(e) {
+  return e?.status_code === 404;
 }
 
 // ---------- entity picker ----------
@@ -213,20 +259,36 @@ export function planLabel(friendly, room) {
   return room && f.toLowerCase().startsWith(`${room.toLowerCase()} `) ? f.slice(room.length + 1) : f;
 }
 
-/** The plan entity of `plans` that a plan name refers to (same rule as the room blueprint), or null. */
-export function matchPlan(name, plans, friendly = {}) {
-  if (!name) return null;
-  const want = String(name).toLowerCase();
-  const slug = slugify(name);
-  return plans.find((p) => {
-    const fn = String(friendly[p] || '').toLowerCase();
-    return p.endsWith(`_${slug}`) || fn === want || fn.endsWith(` ${want}`);
-  }) || null;
+/**
+ * The plan of a room that a plan name (from an exception or a keyword rule) refers to, or null.
+ * Exact matches first: a plan whose name without the room name has the same slug, then the plan with
+ * the entity id the card gives such a plan. Only then a plan whose entity id or name ends with the
+ * name, and only if exactly one does ("Werktag" must not pick "Kurzer Werktag").
+ * The same rule is `plan_hits` and `named_plan` in the room blueprint; keep both alike.
+ * @param {string} name the plan name
+ * @param {string[]} plans the room's plan entity ids, in the room's order
+ * @param {{friendly?: Record<string, string>, room?: string}} [options] the plans' friendly names,
+ *   and the room's name
+ * @returns {string | null} a plan entity id
+ */
+export function matchPlan(name, plans, { friendly = {}, room = '' } = {}) {
+  const want = slugify(name || '');
+  if (!want) return null;
+  const own = `schedule.weekheat_${slugify(room)}_${want}`;
+  const exact = [
+    ...plans.filter((p) => slugify(planLabel(friendly[p], room)) === want),
+    ...plans.filter((p) => p === own),
+  ];
+  const tail = ` ${String(name).toLowerCase()}`;
+  const ends = plans.filter(
+    (p) => p.endsWith(`_${want}`) || String(friendly[p] || '').toLowerCase().endsWith(tail),
+  );
+  return exact[0] || (ends.length === 1 ? ends[0] : null);
 }
 
 /** The plan entity a room uses on a day (a day as returned by the day script). */
 export function planForDay(room, day, friendly = {}) {
-  const named = day && day.plan ? matchPlan(day.plan, room.plans, friendly) : null;
+  const named = day && day.plan ? matchPlan(day.plan, room.plans, { friendly, room: room.name }) : null;
   if (named) return named;
   if (day && day.free) return room.free_day;
   return (room.week || {})[day ? day.weekday : 'mon'] || room.plans[0];
@@ -306,6 +368,10 @@ export const I18N = {
     room_closed_help: 'Ist der Raum um den Spielraum wärmer als die Solltemperatur, geht das Ventil zu (5 °C). Ist er wieder auf die Solltemperatur abgekühlt, heizt es wieder.',
     rs_workaround: 'Nur nötig für Thermostate, die einen verknüpften Sensor nicht beachten oder überschwingen, z. B. Aqara W600. Thermostate, die gut regeln, brauchen das nicht.',
     bp_old: 'Die Weekheat-Blueprints sind älter als die Karte ({a} → {b}).', bp_none: 'ohne Version', bp_update: 'Jetzt aktualisieren',
+    err_room_name: 'Der Name braucht mindestens einen Buchstaben oder eine Ziffer.',
+    err_room_exists: 'Ein Raum mit diesem Namen existiert schon (Automation {id}).',
+    err_no_blueprint: 'Der Blueprint „Weekheat room“ ist nicht installiert.',
+    err_state_size: 'Zu viele Thermostate für einen Raum: Ihr Zustand bräuchte bis zu {size} Zeichen, ein Zustands-Helfer fasst {max}. Weniger Thermostate wählen oder ihnen kürzere Entity-IDs geben.',
     room_help: 'Ist der Raum um den Spielraum wärmer als die Solltemperatur, werden die Thermostate auf 5 °C gestellt; ist er wieder auf die Solltemperatur abgekühlt, bekommen sie sie zurück. Für Thermostate, die überschwingen oder einen verknüpften Sensor nicht beachten.',
   },
   en: {
@@ -355,6 +421,10 @@ export const I18N = {
     room_closed_help: 'When the room is the margin above the setpoint, the valve closes (5 °C). Once it has cooled down to the setpoint, it heats again.',
     rs_workaround: 'Only needed for thermostats that ignore a linked sensor or overshoot, e.g. the Aqara W600. Thermostats that control well do not need it.',
     bp_old: 'The Weekheat blueprints are older than the card ({a} → {b}).', bp_none: 'no version', bp_update: 'Update now',
+    err_room_name: 'The name needs at least one letter or digit.',
+    err_room_exists: 'A room with this name exists already (automation {id}).',
+    err_no_blueprint: 'The "Weekheat room" blueprint is not installed.',
+    err_state_size: 'Too many thermostats for one room: their state would need up to {size} characters, and a state helper holds {max}. Pick fewer thermostats, or give them shorter entity ids.',
     room_help: 'When the room is the margin above the setpoint, the thermostats are set to 5 °C; once it has cooled down to the setpoint, they get it back. For thermostats that overshoot or ignore a linked sensor.',
   },
 };
@@ -435,7 +505,8 @@ export function esc(s) {
 const Base = typeof HTMLElement !== 'undefined' ? HTMLElement : class {};
 const RELOAD_MS = 10 * 60 * 1000; // re-read rooms, plans and days this often
 
-class WeekheatCard extends Base {
+/** The card element `custom:weekheat-card`. Exported for the tests, which drive it with a fake `hass`. */
+export class WeekheatCard extends Base {
   setConfig(config) {
     this._config = { days: 14, day_script: 'script.weekheat_day', layout: 'dial', dial_min: MIN_T, dial_max: MAX_T, ...config };
     let saved = null;
@@ -482,15 +553,12 @@ class WeekheatCard extends Base {
     try {
       let rooms;
       if (this._admin) {
-        const autos = Object.values(h.states).filter((s) => s.entity_id.startsWith('automation.') && s.attributes.id);
-        const cfgs = await Promise.all(autos.map((a) => h.callApi('GET', `config/automation/config/${a.attributes.id}`)
-          .then((c) => ({ entity: a.entity_id, id: a.attributes.id, c })).catch(() => null)));
-        rooms = cfgs.filter((x) => x && x.c.use_blueprint && String(x.c.use_blueprint.path).endsWith(ROOM_BLUEPRINT))
-          .map(({ entity, id, c }) => ({ entity, id, cfg: c, ...roomFromInput(c.use_blueprint.input || {}, c.alias) }));
+        // Any failed read throws: the room directory below must never be published incomplete.
+        rooms = await this._readRooms();
         const scriptId = this._config.day_script.replace(/^script\./, '');
-        this._script = await h.callApi('GET', `config/script/config/${scriptId}`).catch(() => null);
-        const bps = await h.callWS({ type: 'blueprint/list', domain: 'automation' }).catch(() => ({}));
-        const sbps = await h.callWS({ type: 'blueprint/list', domain: 'script' }).catch(() => ({}));
+        this._script = await this._readConfig(`script/config/${scriptId}`);
+        const bps = await h.callWS({ type: 'blueprint/list', domain: 'automation' });
+        const sbps = await h.callWS({ type: 'blueprint/list', domain: 'script' });
         this._roomBlueprint = Object.keys(bps).find((p) => p.endsWith(ROOM_BLUEPRINT)) || null;
         // Blueprints older than this card: offered for update (see bp-update).
         this._bpOld = [['automation', bps, ROOM_BLUEPRINT], ['script', sbps, DAY_BLUEPRINT]].flatMap(([domain, list, file]) => {
@@ -531,9 +599,42 @@ class WeekheatCard extends Base {
       await this._loadDays();
       this._error = null;
     } catch (e) {
-      this._error = e.message || String(e);
+      this._error = errorText(e);
     }
     this._render(true);
+  }
+
+  /**
+   * Admin: the Weekheat rooms among all automations, from their configurations. An automation
+   * without a configuration of its own (404: not made in the UI) is skipped; any other failed read
+   * throws, so that a room is never left out because reading it failed.
+   * @returns {Promise<object[]>} the rooms, with `entity`, `id` and `cfg` added to roomFromInput
+   */
+  async _readRooms() {
+    const autos = Object.values(this._hass.states).filter(
+      (s) => s.entity_id.startsWith('automation.') && s.attributes.id,
+    );
+    const configs = await Promise.all(
+      autos.map((a) => this._readConfig(`automation/config/${a.attributes.id}`)),
+    );
+    return autos
+      .map((a, i) => ({ entity: a.entity_id, id: a.attributes.id, cfg: configs[i] }))
+      .filter((r) => String(r.cfg?.use_blueprint?.path || '').endsWith(ROOM_BLUEPRINT))
+      .map((r) => ({ ...r, ...roomFromInput(r.cfg.use_blueprint.input || {}, r.cfg.alias) }));
+  }
+
+  /**
+   * A configuration from Home Assistant's config API, or null if there is none (404).
+   * @param {string} path the part after `config/`, e.g. `script/config/weekheat_day`
+   * @returns {Promise<object | null>} rejects on any other failure
+   */
+  async _readConfig(path) {
+    try {
+      return await this._hass.callApi('GET', `config/${path}`);
+    } catch (e) {
+      if (isNotFound(e)) return null;
+      throw e;
+    }
   }
 
   /** Is the day script there? Admins know from its configuration, others from the published directory. */
@@ -704,7 +805,7 @@ class WeekheatCard extends Base {
       await fn();
       if (ok !== false) this._flash(this._t.saved);
     } catch (e) {
-      this._flash(`${this._t.error}: ${e.message || e.error || JSON.stringify(e)}`, true);
+      this._flash(`${this._t.error}: ${errorText(e)}`, true);
     }
   }
 
@@ -716,6 +817,7 @@ class WeekheatCard extends Base {
   }
 
   async _saveRoomConfig(room, input) {
+    if (input.thermostats) this._checkStateSize(input.thermostats);
     const cfg = { ...room.cfg, use_blueprint: { ...room.cfg.use_blueprint, input: { ...room.cfg.use_blueprint.input, ...input } } };
     await this._hass.callApi('POST', `config/automation/config/${room.id}`, cfg);
     room.cfg = cfg;
@@ -729,7 +831,7 @@ class WeekheatCard extends Base {
     let sw = room.heating_switch;
     if (!sw || !h.states[sw]) {
       if (!this._admin) throw new Error('no heating switch');
-      sw = await this._createSwitch(room.name);
+      sw = (await this._createSwitch(room.name)).entity;
       await this._saveRoomConfig(room, { heating_switch: sw });
       await new Promise((r) => setTimeout(r, 1500)); // the automation reloads with the new trigger
       await h.callService('input_boolean', 'turn_off', { entity_id: sw });
@@ -738,13 +840,51 @@ class WeekheatCard extends Base {
     await h.callService('input_boolean', h.states[sw].state === 'off' ? 'turn_on' : 'turn_off', { entity_id: sw });
   }
 
+  /**
+   * Create a room's heating switch (an input_boolean, on) and wait until its entity exists.
+   * @param {string} name the room's name
+   * @returns {Promise<{entity: string, id: string}>} its entity id and its helper id
+   */
   async _createSwitch(name) {
     const h = this._hass;
     const it = await h.callWS({ type: 'input_boolean/create', name: `Weekheat ${name} ${this._t.heating_l}`, icon: 'mdi:radiator', initial: true });
     const sw = `input_boolean.${it.id}`;
     for (let i = 0; i < 20 && !h.states[sw]; i++) await new Promise((r) => setTimeout(r, 250));
     if (this._hass.states[sw]?.state !== 'on') await h.callService('input_boolean', 'turn_on', { entity_id: sw });
-    return sw;
+    return { entity: sw, id: it.id };
+  }
+
+  /**
+   * Create a room's state helper: an input_text as long as Home Assistant allows.
+   * @param {string} name the room's name
+   * @returns {Promise<{entity: string, id: string}>} its entity id and its helper id
+   */
+  async _createStateHelper(name) {
+    const item = await this._hass.callWS({
+      type: 'input_text/create',
+      name: `Weekheat ${name} state`,
+      max: STATE_MAX,
+      icon: 'mdi:database',
+    });
+    return { entity: `input_text.${item.id}`, id: item.id };
+  }
+
+  /**
+   * Delete a helper made through the UI (input_text, input_boolean).
+   * @param {string} domain the helper's domain
+   * @param {{id: string}} helper as returned when it was created
+   */
+  async _removeHelper(domain, helper) {
+    await this._hass.callWS({ type: `${domain}/delete`, [`${domain}_id`]: helper.id });
+  }
+
+  /**
+   * Throw if a room with these thermostats could outgrow its state helper (see stateSize).
+   * @param {string[]} thermostats the room's climate entity ids
+   */
+  _checkStateSize(thermostats) {
+    const size = stateSize(thermostats);
+    if (size > STATE_MAX) throw new Error(fill(this._t.err_state_size, { size, max: STATE_MAX }));
   }
 
   async _poke(rooms = this._rooms) {
@@ -798,41 +938,143 @@ class WeekheatCard extends Base {
     const used = entity === room.free_day || Object.values(room.week || {}).includes(entity);
     if (used) throw new Error(this._t.plan_in_use);
     await this._saveRoomConfig(room, { plans: room.plans.filter((p) => p !== entity) });
-    const it = this._plans[entity]?.item;
-    if (it) await this._hass.callWS({ type: 'schedule/delete', schedule_id: it.id });
+    await this._removePlan(entity);
+  }
+
+  /**
+   * Delete a plan's schedule helper and forget it.
+   * @param {string} entity the plan's schedule entity id
+   */
+  async _removePlan(entity) {
+    const item = this._plans[entity]?.item;
+    if (item) await this._hass.callWS({ type: 'schedule/delete', schedule_id: item.id });
     delete this._plans[entity];
   }
 
+  /**
+   * Admin: create a room (two starter plans, a state helper, a heating switch and the automation,
+   * paused), then reload. If a step fails, what was made so far is deleted again.
+   * @param {string} name the room's name
+   * @param {string[]} thermostats its climate entity ids
+   */
   async _addRoom(name, thermostats) {
-    const h = this._hass;
-    if (!this._roomBlueprint) throw new Error('blueprint weekheat_room not found');
-    const slug = slugify(name);
-    const id = `weekheat_${slug}`;
-    if (this._rooms.some((r) => r.id === id)) throw new Error(`${name}: exists`);
-    const t = this._t;
-    const weekday = await this._createPlan(name, t.working_day, STARTER.weekday);
-    const free = await this._createPlan(name, t.free_day, STARTER.free);
-    const st = await h.callWS({ type: 'input_text/create', name: `Weekheat ${name} state`, max: 255, icon: 'mdi:database' });
-    const stateEntity = `input_text.${st.id}`;
-    const heatingSwitch = await this._createSwitch(name);
-    const input = { room_name: name, thermostats, plans: [weekday, free], free_day: free, heating_switch: heatingSwitch,
-      week: Object.fromEntries(WEEK.map((d) => [d, weekday])), state: stateEntity,
-      day_script: this._config.day_script, language: this._lang,
-      ...exerciseFromInput((this._allRooms || this._rooms || [])[0]?.cfg?.use_blueprint?.input) };
-    // Created paused: initial_state false first, switched off, then saved again without it.
-    const cfg = { alias: `Weekheat ${name}`, description: 'Weekheat', initial_state: false,
-      use_blueprint: { path: this._roomBlueprint, input } };
-    await h.callApi('POST', `config/automation/config/${id}`, cfg);
-    let entity = null;
-    for (let i = 0; i < 20 && !entity; i++) {
-      entity = Object.values(this._hass.states).find((s) => s.entity_id.startsWith('automation.') && s.attributes.id === id)?.entity_id;
-      if (!entity) await new Promise((r) => setTimeout(r, 250));
+    if (!this._roomBlueprint) throw new Error(this._t.err_no_blueprint);
+    this._checkStateSize(thermostats);
+    const id = await this._freeRoomId(name);
+    const undo = [];
+    try {
+      await this._createRoom({ id, name, thermostats }, undo);
+    } catch (e) {
+      await this._undo(undo);
+      throw e;
     }
-    if (entity) await h.callService('automation', 'turn_off', { entity_id: entity });
-    delete cfg.initial_state;
-    await h.callApi('POST', `config/automation/config/${id}`, cfg);
-    this._flash(t.new_room_paused);
+    this._flash(this._t.new_room_paused);
     await this._load();
+  }
+
+  /**
+   * The automation id for a new room: `weekheat_<slug of the name>`. Throws if the name has no
+   * letter or digit, or if a room or automation has that id already, also one this card does not
+   * show (the `rooms` option) and one that is not a Weekheat room.
+   * @param {string} name the room's name
+   * @returns {Promise<string>}
+   */
+  async _freeRoomId(name) {
+    const slug = slugify(name);
+    if (!slug) throw new Error(this._t.err_room_name);
+    const id = `weekheat_${slug}`;
+    const known = (this._allRooms || []).some((r) => r.id === id);
+    if (known || (await this._readConfig(`automation/config/${id}`))) {
+      throw new Error(fill(this._t.err_room_exists, { id }));
+    }
+    return id;
+  }
+
+  /**
+   * The steps of _addRoom. Before each step that makes something, `undo` gets a function that
+   * removes it again.
+   * @param {{id: string, name: string, thermostats: string[]}} room the new room
+   * @param {Array<() => Promise<void>>} undo
+   */
+  async _createRoom({ id, name, thermostats }, undo) {
+    const weekday = await this._createPlan(name, this._t.working_day, STARTER.weekday);
+    undo.push(() => this._removePlan(weekday));
+    const free = await this._createPlan(name, this._t.free_day, STARTER.free);
+    undo.push(() => this._removePlan(free));
+    const state = await this._createStateHelper(name);
+    undo.push(() => this._removeHelper('input_text', state));
+    const sw = await this._createSwitch(name);
+    undo.push(() => this._removeHelper('input_boolean', sw));
+    undo.push(() => this._hass.callApi('DELETE', `config/automation/config/${id}`));
+    const made = { weekday, free, state: state.entity, sw: sw.entity };
+    await this._createAutomation(id, this._roomInput(name, thermostats, made));
+  }
+
+  /**
+   * The blueprint inputs of a new room. The valve exercise settings are those of the other rooms.
+   * @param {string} name the room's name
+   * @param {string[]} thermostats its climate entity ids
+   * @param {{weekday: string, free: string, state: string, sw: string}} made the entity ids of the
+   *   working-day plan, the free-day plan, the state helper and the heating switch
+   * @returns {object}
+   */
+  _roomInput(name, thermostats, made) {
+    return {
+      room_name: name,
+      thermostats,
+      plans: [made.weekday, made.free],
+      free_day: made.free,
+      week: Object.fromEntries(WEEK.map((d) => [d, made.weekday])),
+      state: made.state,
+      heating_switch: made.sw,
+      day_script: this._config.day_script,
+      language: this._lang,
+      ...exerciseFromInput((this._allRooms || this._rooms || [])[0]?.cfg?.use_blueprint?.input),
+    };
+  }
+
+  /**
+   * Save a new room automation, paused: saved with `initial_state: false`, switched off, then saved
+   * again without it, so that later restarts keep whatever the user chooses.
+   * @param {string} id the automation id
+   * @param {object} input its blueprint inputs
+   */
+  async _createAutomation(id, input) {
+    const h = this._hass;
+    const use = { path: this._roomBlueprint, input };
+    const cfg = { alias: `Weekheat ${input.room_name}`, description: 'Weekheat', use_blueprint: use };
+    await h.callApi('POST', `config/automation/config/${id}`, { ...cfg, initial_state: false });
+    const entity = await this._waitForAutomation(id);
+    if (entity) await h.callService('automation', 'turn_off', { entity_id: entity });
+    await h.callApi('POST', `config/automation/config/${id}`, cfg);
+  }
+
+  /**
+   * The entity id of the automation with config id `id`, once Home Assistant has loaded it
+   * (waits up to 5 s; undefined if it has not appeared by then).
+   * @param {string} id the automation's config id
+   * @returns {Promise<string | undefined>}
+   */
+  async _waitForAutomation(id) {
+    const find = () => Object.values(this._hass.states)
+      .find((s) => s.entity_id.startsWith('automation.') && s.attributes.id === id)?.entity_id;
+    for (let i = 0; i < 20 && !find(); i++) await new Promise((r) => setTimeout(r, 250));
+    return find();
+  }
+
+  /**
+   * Run the undo steps of a failed creation, newest first. A step that fails as well is only
+   * logged: the error that stopped the creation is the one the user needs to see.
+   * @param {Array<() => Promise<void>>} undo
+   */
+  async _undo(undo) {
+    for (const step of [...undo].reverse()) {
+      try {
+        await step();
+      } catch (e) {
+        console.warn('Weekheat: clean-up after a failed step failed too', e);
+      }
+    }
   }
 
   async _setException(date, ex) {
