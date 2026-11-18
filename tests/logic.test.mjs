@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   toMin, fromMin, nowIn, addDays, blocksToPeriods, periodsToBlocks, checkPeriods, periodAt, slugify,
   planLabel, matchPlan, planForDay, parseException, exceptionTitle, reasonText, fmtTemp, STARTER,
-  roomFromInput, DIRECTORY_FIELDS, exerciseFromInput, pickKind, pickCandidates, count, targetsText, clampT,
+  roomFromInput, DIRECTORY_FIELDS, exerciseFromInput, pickKind, pickCandidates, count, targetsText, clampT, blueprintVersion, olderVersion, BLUEPRINT_VERSION, VERSION,
 } from '../weekheat-card.js';
 
 test('time', () => {
@@ -169,4 +169,23 @@ test('targetsText shows one value or each differing one', () => {
   assert.equal(targetsText([], 'de'), '–');
   assert.equal(clampT(31), 30);
   assert.equal(clampT(4), 5);
+});
+
+test('blueprint versions', () => {
+  assert.equal(blueprintVersion('Decides … (custom:weekheat-card). Weekheat 0.12.0'), '0.12.0');
+  assert.equal(blueprintVersion('Pairs with the Weekheat card (custom:weekheat-card).'), null);
+  assert.ok(olderVersion(null, '0.12.0'));
+  assert.ok(olderVersion('0.9.0', '0.12.0'));
+  assert.ok(!olderVersion('0.12.0', '0.12.0'));
+  assert.ok(!olderVersion('1.0.0', '0.12.0'));
+  // the card never expects blueprints newer than itself
+  assert.ok(!olderVersion(VERSION, BLUEPRINT_VERSION));
+});
+
+test('the blueprints carry the version the card expects', async () => {
+  const { readFile } = await import('node:fs/promises');
+  for (const f of ['blueprints/automation/weekheat_room.yaml', 'blueprints/script/weekheat_day.yaml']) {
+    const y = await readFile(new URL(`../${f}`, import.meta.url), 'utf8');
+    assert.equal(blueprintVersion(y.split('\n  domain:')[0]), BLUEPRINT_VERSION, f);
+  }
 });

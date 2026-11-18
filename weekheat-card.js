@@ -2,7 +2,10 @@
 // Pairs with the Weekheat blueprints (weekheat_day script, weekheat_room automation).
 // The first part (exported) is plain logic without DOM, tested in tests/logic.test.mjs.
 
-export const VERSION = '0.11.1';
+export const VERSION = '0.12.0';
+/** The blueprints that belong to this card: their release, marked at the end of their description. */
+export const BLUEPRINT_VERSION = '0.12.0';
+export const BLUEPRINT_REPO = 'https://github.com/ekienmeier/weekheat-card/blob/';
 export const WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 export const SCHEDULE_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 export const ROOM_BLUEPRINT = 'weekheat_room.yaml';
@@ -44,6 +47,21 @@ export function targetsText(targets, lang) {
   if (!v.length) return '–';
   if (v.every((x) => Math.abs(x - v[0]) < 0.05)) return fmtTemp(v[0], lang);
   return `${v.map((x) => Number(x).toLocaleString(lang === 'de' ? 'de-AT' : 'en-GB', { maximumFractionDigits: 1 })).join(' / ')} °C`;
+}
+
+/** The Weekheat version marked in a blueprint's description ("… Weekheat 0.12.0"), or null. */
+export function blueprintVersion(description) {
+  const m = [...String(description || '').matchAll(/\bWeekheat (\d+\.\d+\.\d+)\b/g)].pop();
+  return m ? m[1] : null;
+}
+
+/** Is version `a` (null: none) older than `b`? */
+export function olderVersion(a, b) {
+  if (!a) return true;
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] < pb[i];
+  return false;
 }
 
 // ---------- entity picker ----------
@@ -286,6 +304,8 @@ export const I18N = {
     windows_doors: 'Fenster und Türen', delay: 'Verzögerung (Sekunden)', margin_less: 'Spielraum kleiner', margin_more: 'Spielraum größer',
     day_wd: 'Workday und Feiertage', calendars_n: ['Kalender', 'Kalender'], rules_n: ['Regel', 'Regeln'], room_sensor_short: 'Raumsensor',
     room_closed_help: 'Ist der Raum um den Spielraum wärmer als die Solltemperatur, geht das Ventil zu (5 °C). Ist er wieder auf die Solltemperatur abgekühlt, heizt es wieder.',
+    rs_workaround: 'Nur nötig für Thermostate, die einen verknüpften Sensor nicht beachten oder überschwingen, z. B. Aqara W600. Thermostate, die gut regeln, brauchen das nicht.',
+    bp_old: 'Die Weekheat-Blueprints sind älter als die Karte ({a} → {b}).', bp_none: 'ohne Version', bp_update: 'Jetzt aktualisieren',
     room_help: 'Ist der Raum um den Spielraum wärmer als die Solltemperatur, werden die Thermostate auf 5 °C gestellt; ist er wieder auf die Solltemperatur abgekühlt, bekommen sie sie zurück. Für Thermostate, die überschwingen oder einen verknüpften Sensor nicht beachten.',
   },
   en: {
@@ -333,6 +353,8 @@ export const I18N = {
     windows_doors: 'Windows and doors', delay: 'Delay (seconds)', margin_less: 'Smaller margin', margin_more: 'Larger margin',
     day_wd: 'Workday and holidays', calendars_n: ['calendar', 'calendars'], rules_n: ['rule', 'rules'], room_sensor_short: 'room sensor',
     room_closed_help: 'When the room is the margin above the setpoint, the valve closes (5 °C). Once it has cooled down to the setpoint, it heats again.',
+    rs_workaround: 'Only needed for thermostats that ignore a linked sensor or overshoot, e.g. the Aqara W600. Thermostats that control well do not need it.',
+    bp_old: 'The Weekheat blueprints are older than the card ({a} → {b}).', bp_none: 'no version', bp_update: 'Update now',
     room_help: 'When the room is the margin above the setpoint, the thermostats are set to 5 °C; once it has cooled down to the setpoint, they get it back. For thermostats that overshoot or ignore a linked sensor.',
   },
 };
@@ -468,7 +490,14 @@ class WeekheatCard extends Base {
         const scriptId = this._config.day_script.replace(/^script\./, '');
         this._script = await h.callApi('GET', `config/script/config/${scriptId}`).catch(() => null);
         const bps = await h.callWS({ type: 'blueprint/list', domain: 'automation' }).catch(() => ({}));
+        const sbps = await h.callWS({ type: 'blueprint/list', domain: 'script' }).catch(() => ({}));
         this._roomBlueprint = Object.keys(bps).find((p) => p.endsWith(ROOM_BLUEPRINT)) || null;
+        // Blueprints older than this card: offered for update (see bp-update).
+        this._bpOld = [['automation', bps, ROOM_BLUEPRINT], ['script', sbps, DAY_BLUEPRINT]].flatMap(([domain, list, file]) => {
+          const path = Object.keys(list).find((p) => p.endsWith(file));
+          const installed = path ? blueprintVersion(list[path]?.metadata?.description) : null;
+          return path && olderVersion(installed, BLUEPRINT_VERSION) ? [{ domain, path, file, installed }] : [];
+        });
         this._exceptions = this._script?.use_blueprint?.input?.exceptions || null;
         await this._publish(rooms);
       } else {
@@ -914,6 +943,22 @@ class WeekheatCard extends Base {
     this._render();
   }
 
+  /** Replace the outdated Weekheat blueprints with the ones of this card's release (the GitHub tag), as HA's
+   * "Re-import" does, then reload automations and scripts so the rooms use them. */
+  async _updateBlueprints() {
+    const h = this._hass;
+    for (const b of this._bpOld || []) {
+      const dir = b.domain === 'script' ? 'script' : 'automation';
+      const rel = `blueprints/${dir}/${b.file}`;
+      const r = await h.callWS({ type: 'blueprint/import', url: `${BLUEPRINT_REPO}v${BLUEPRINT_VERSION}/${rel}` });
+      await h.callWS({ type: 'blueprint/save', domain: b.domain, path: b.path.replace(/\.yaml$/, ''), yaml: r.raw_data,
+        source_url: `${BLUEPRINT_REPO}main/${rel}`, allow_override: true });
+    }
+    await h.callService('automation', 'reload', {});
+    await h.callService('script', 'reload', {});
+    await this._load();
+  }
+
   /** Write a pending value of _setTarget now. */
   _flushStep() {
     clearTimeout(this._stepTimer);
@@ -1059,6 +1104,7 @@ class WeekheatCard extends Base {
         return;
       }
       case 'step-all': this._stepAllBy(room, +el.dataset.v); return;
+      case 'bp-update': this._run(() => this._updateBlueprints()); return;
       case 'th-sel': ui.thSel = { ...(ui.thSel || {}), [room.id]: el.dataset.v }; break;
       case 'to-plan': {
         const n = this._roomNow(room);
@@ -1280,8 +1326,10 @@ class WeekheatCard extends Base {
     const msg = this._msg ? `<div class="banner ${this._msg.bad ? 'bad' : 'ok'}">${esc(this._msg.text)}</div>` : '';
     const err = this._error ? `<div class="banner bad">${esc(this._error)}</div>` : '';
     const noScript = this._rooms && this._admin && !this._script ? `<div class="banner bad">${esc(t.no_script)}</div>` : '';
+    const bpOld = this._admin && this._bpOld?.length ? `<div class="banner warn"><span>${esc(t.bp_old.replace('{a}', this._bpOld[0].installed || t.bp_none).replace('{b}', BLUEPRINT_VERSION))}</span>
+      <button class="btn small" data-a="bp-update">${esc(t.bp_update)}</button></div>` : '';
     this._cardEl.innerHTML = `<div class="top">${title}<span class="grow"></span>${dayChip}${gear}</div>
-      ${msg}${err}${noScript}${notes}<div class="body">${body}</div>`;
+      ${msg}${err}${noScript}${bpOld}${notes}<div class="body">${body}</div>`;
     if (ui.pickFocus != null) {
       const q = this.shadowRoot.querySelector('[data-c="pick-q"]');
       if (q) { q.focus(); q.setSelectionRange(ui.pickFocus, ui.pickFocus); }
@@ -1630,8 +1678,9 @@ class WeekheatCard extends Base {
           <button class="x" data-a="unpick" data-k="rs" data-v="${esc(d.room_sensor)}" aria-label="${esc(`${t.remove}: ${nm(d.room_sensor)}`)}">✕</button></div>
         <div class="stepper"><span class="grow">${esc(t.room_margin)}</span><button class="round" data-a="margin" data-v="-1" aria-label="${esc(t.margin_less)}">−</button>
           <span class="sval">${esc(fmtM)}</span><button class="round" data-a="margin" data-v="1" aria-label="${esc(t.margin_more)}">+</button></div>
-        <div class="dim small">${esc(t.room_closed_help.replace('den Spielraum', fmtM).replace('the margin', fmtM))}</div>`
-      : `${this._picker(room, 'rs', [])}<div class="dim small">${esc(t.room_help)}</div>`;
+        <div class="dim small">${esc(t.room_closed_help.replace('den Spielraum', fmtM).replace('the margin', fmtM))}</div>
+        <div class="dim small">${esc(t.rs_workaround)}</div>`
+      : `${this._picker(room, 'rs', [])}<div class="dim small">${esc(t.room_help)}</div><div class="dim small">${esc(t.rs_workaround)}</div>`;
     return `<div class="setup">
       <label class="field">${esc(t.name)} <input data-c="r-name" value="${esc(d.name)}"></label>
       ${sec('th', t.thermostats, d.thermostats.map(nm).join(', ') || '–', th)}

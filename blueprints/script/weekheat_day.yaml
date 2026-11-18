@@ -8,7 +8,7 @@ blueprint:
     the keyword of a keyword rule. A keyword rule makes the day free, or keeps
     it a working day with a named plan (e.g. "Homeoffice"). Otherwise the day
     is a working day. Used by the Weekheat room automations and the Weekheat
-    card (custom:weekheat-card).
+    card (custom:weekheat-card). Weekheat 0.12.0
   domain: script
   source_url: https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/script/weekheat_day.yaml
   input:

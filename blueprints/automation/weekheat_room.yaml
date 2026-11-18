@@ -18,8 +18,9 @@ blueprint:
     a different temperature began in between). Other events wait until it is done.
     Optional room sensor: Weekheat then holds the valves at 5 °C while the room is at
     least the margin above the setpoint, and gives the setpoint back once the room has
-    cooled down to it (for thermostats that overshoot, or ignore a linked sensor).
-    Pairs with the Weekheat card (custom:weekheat-card).
+    cooled down to it. A workaround for thermostats that ignore a linked sensor or
+    overshoot (e.g. the Aqara W600); not needed for ones that control well.
+    Pairs with the Weekheat card (custom:weekheat-card). Weekheat 0.12.0
   domain: automation
   source_url: https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/automation/weekheat_room.yaml
   input:
@@ -123,9 +124,10 @@ blueprint:
     room_sensor:
       name: Room sensor
       description: >-
-        Optional temperature sensor in the room. While the room is at least the margin above the
-        setpoint, the thermostats are held at 5 °C; once it is back down to the setpoint, they get
-        the setpoint again.
+        Optional, a workaround for thermostats that ignore a linked sensor or overshoot (e.g. the
+        Aqara W600). While the room is at least the margin above the setpoint, the thermostats are
+        held at 5 °C; once it is back down to the setpoint, they get the setpoint again. A setpoint
+        below 10 °C set on the thermostat itself meanwhile is ignored (a nudge from the 5 °C shown).
       default: []
       selector:
         entity:
@@ -483,8 +485,9 @@ actions:
           applied: "{{ dict(applied.items() | rejectattr(0, 'in', ['_open', '_rc']) | list) }}"
 
   # Room sensor holds the valves closed (or a window was just closed): keep them at 5 °C until the room
-  # is back down to the setpoint. A new period's temperature or a setpoint set by hand becomes the value
-  # given back later.
+  # is back down to the setpoint. A new period's temperature or a setpoint set by hand (10 °C or more)
+  # becomes the value given back later; anything lower is a nudge from the 5 °C on the thermostat's
+  # display and is undone, the saved value stays.
   - if:
       - condition: template
         value_template: "{{ mode == 'rc' }}"
@@ -498,7 +501,7 @@ actions:
               {%- set cur = state_attr(th, 'temperature') -%}
               {%- if wanted is number and (last is not number or (last - wanted) | abs >= 0.05) -%}
                 {%- set ns.a = dict(ns.a, **{th: [wanted, stamp]}) -%}{%- set ns.s = ns.s + [wanted] -%}
-              {%- elif rc_held and states(th) not in ['off', 'unavailable', 'unknown'] and cur is number and (cur - 5) | abs >= 0.25 -%}
+              {%- elif rc_held and states(th) not in ['off', 'unavailable', 'unknown'] and cur is number and cur >= 10 -%}
                 {%- set ns.s = ns.s + [cur | float] -%}{%- set ns.m = true -%}
               {%- else -%}{%- set ns.s = ns.s + [old] -%}{%- endif -%}
             {%- endfor -%}

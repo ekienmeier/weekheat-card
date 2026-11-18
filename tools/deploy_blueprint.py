@@ -9,10 +9,11 @@ from pathlib import Path
 from ha import HA
 
 REPO = "https://github.com/ekienmeier/weekheat-card/blob/main/"
+ROOT = Path(__file__).resolve().parent.parent  # the repo; source URLs are relative to it, wherever this runs
 
 for name in sys.argv[1:]:
-    p = Path(name)
+    p = Path(name).resolve()
     domain = p.parent.name  # blueprints/<domain>/<file>
     HA().ws({"type": "blueprint/save", "domain": domain, "path": f"ekienmeier/{p.name}",
-             "yaml": p.read_text(), "source_url": REPO + p.as_posix(), "allow_override": True})
+             "yaml": p.read_text(), "source_url": REPO + p.relative_to(ROOT).as_posix(), "allow_override": True})
     print(f"saved {domain}/ekienmeier/{p.name}")

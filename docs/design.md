@@ -248,8 +248,10 @@ set by hand. Two states:
 - No polling: the automation also runs on every change of the room sensor, and on a setpoint change
   while closed (a setpoint set by hand on the card, the thermostat or the vendor app).
 - While closed, a period with a different temperature replaces the saved value (as with an open window),
-  and a setpoint set by hand (anything not 5 °C) becomes the saved value; the room is then checked
-  against it at once (raised above the room: released; still below: 5 °C again).
+  and a setpoint set by hand of 10 °C or more becomes the saved value; the room is then checked against
+  it at once (raised above the room: released; still below: 5 °C again). A lower one is a nudge from the
+  5 °C the thermostat shows (seen 2026-11-18: an unlocked knob turned to 6 °C, stored as the setpoint);
+  it is undone and the saved value stays. 0.12.
 - The hold time spaces out only switches the room temperature causes (battery, motor). A new period or a
   setpoint set by hand is let through at once; a held-back switch is caught by the next sensor change or
   the 15-minute tick.
@@ -265,6 +267,16 @@ set by hand. Two states:
 Tested 2026-11-17 in the bathroom (W600, T1 at 22.8 °C): the 06:00 period (10 °C) closed at once (5 °C
 written, 10 °C saved); 20 °C set by hand while closed was saved and 5 °C written again within 5 s; 24 °C
 by hand released at once (24 °C kept); 10 °C by hand then closed at the 06:15 tick, after the hold time.
+
+### Blueprint updates
+
+HACS installs only the card; blueprints are copies in HA that nothing updates. So each blueprint ends its
+description with the release it belongs to (`Weekheat 0.12.0`), and the card has `BLUEPRINT_VERSION`,
+the release whose blueprints it needs (it changes only when a release changes them; a test checks both
+match). An admin's card compares them (`blueprint/list`) and, when older or unmarked, offers *Update
+now*: `blueprint/import` of the file at the card's tag (`…/blob/v0.12.0/…`, not `main`), `blueprint/save`
+over the installed copy (source URL `main`, so HA's own re-import still works), then reloading
+automations and scripts. A banner rather than silent: it changes how the rooms behave.
 
 ### Home Assistant down
 
