@@ -122,7 +122,9 @@ Each says what is wrong, where, a way to fix it, how to check it, and what it me
   update banner (`src/ha/blueprints.js`, `blueprintStatus`) would have to know it.
 - **Version.** Minor, with blueprint changes.
 
-### 9. Optional: what the default HACS store would need
+### 9. Not planned: the default HACS store
 
-The repository's description and topics (GitHub settings) and images in the README. Only if the owner
-wants Weekheat in the default HACS store; CI's HACS check skips these now (`.github/workflows/check.yaml`).
+The owner decided on 2026-11-18 not to publish Weekheat in the default HACS store: it would not make
+their own updates easier (a custom repository gets the same update entity), and blueprints are not
+distributed by HACS either way. CI's HACS check keeps skipping description, topics and images
+(`.github/workflows/check.yaml`).

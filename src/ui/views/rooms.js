@@ -118,7 +118,7 @@ function roomView(ctx, room) {
   return html`<div class="room open">
     ${head}
     <div class="room-bar">
-      ${tabs(ctx, room, tab)}<span class="grow"></span>${heatingSwitch(ctx, room, status)}
+      ${tabs(ctx, room, tab)}${heatingSwitch(ctx, room, status)}
     </div>
     ${roomDetail(ctx, room, { tab, status })}
   </div>`;
