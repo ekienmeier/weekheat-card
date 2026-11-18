@@ -126,8 +126,11 @@ class Run:
             self.context["wait"] = {"completed": True}
 
     def variables(self, variables: dict):
-        """Set variables in order, each seeing the ones before. An override replaces a variable
-        where it is first defined; later steps that change it compute as written."""
+        """Set variables in order, each seeing the ones before.
+
+        An override replaces a variable where it is first defined; later steps that change it
+        compute as written.
+        """
         for name, template in variables.items():
             if name in self.overrides:
                 self.context[name] = self.overrides.pop(name)
@@ -135,7 +138,7 @@ class Run:
                 self.context[name] = rendered(self.ha, template, self.context)
 
     def holds(self, conditions: list) -> bool:
-        """Do all template conditions hold?"""
+        """Return whether all template conditions hold."""
         templates = [c if isinstance(c, str) else c["value_template"] for c in conditions]
         return all(render(self.ha, template, self.context) for template in templates)
 
@@ -211,9 +214,11 @@ def event_of(event: dict) -> dict:
 
 
 def synthetic_events(first: datetime.date) -> dict:
-    """Return events for the hard cases: a multi-day exception, "Plan:" with and without a note,
-    a Saturday made a working day, timed keyword events across and at midnight, a multi-day
-    keyword event, a holiday (and its date, which Workday then does not count as a workday)."""
+    """Return events for the hard cases, and the dates Workday then does not count as workdays.
+
+    A multi-day exception, "Plan:" with and without a note, a Saturday made a working day, timed
+    keyword events across and at midnight, a multi-day keyword event, a holiday.
+    """
 
     def day(n):
         """Return the date n days after the first."""
@@ -344,23 +349,23 @@ def room_run(ha: HA, doc: dict, overrides: dict) -> Run:
     return run_blueprint(ha, doc, start, answer, overrides)
 
 
+def compare_scenario(ha: HA, versions: tuple, scenario: tuple) -> tuple:
+    """Return a scenario's mode, the variables that differ, and the writes of both versions."""
+    name, overrides = scenario
+    a, b = (room_run(ha, doc, overrides) for doc in versions)
+    differ = [key for key in a.context if key in b.context and a.context[key] != b.context[key]]
+    return name, b.context.get("mode"), differ, (a.calls, b.calls)
+
+
 def compare_room(ha: HA, ref: str, room: str):
     """Print whether the room blueprint of `ref` and of the working copy agree in each scenario."""
     inputs = ha.rest("GET", f"config/automation/config/{room}")["use_blueprint"]["input"]
-    old = load_blueprint(blueprint_text(ROOM, ref), inputs)
-    new = load_blueprint(blueprint_text(ROOM, None), inputs)
+    versions = tuple(load_blueprint(blueprint_text(ROOM, r), inputs) for r in (ref, None))
     now_m = int(datetime.datetime.now().timestamp() // 60)
     scenarios = room_scenarios(as_list(inputs["thermostats"]), now_m)
-
-    def compare(item):
-        """Return a scenario's mode, the variables that differ, and the writes of both."""
-        name, overrides = item
-        a, b = room_run(ha, old, overrides), room_run(ha, new, overrides)
-        differ = [key for key in a.context if key in b.context and a.context[key] != b.context[key]]
-        return name, b.context.get("mode"), differ, (a.calls, b.calls)
-
     with ThreadPoolExecutor(6) as pool:
-        for name, mode, differ, (old_calls, new_calls) in pool.map(compare, scenarios.items()):
+        results = pool.map(lambda item: compare_scenario(ha, versions, item), scenarios.items())
+        for name, mode, differ, (old_calls, new_calls) in results:
             same = old_calls == new_calls
             print(f"{name:26} mode {mode!s:8} differ: {differ or 'none'}; writes same: {same}")
             if not same:
