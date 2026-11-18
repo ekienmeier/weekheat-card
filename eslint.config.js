@@ -17,7 +17,11 @@ const shape = {
   'max-depth': ['error', 3],
   complexity: ['error', 10],
   'max-params': ['error', 3],
-  'id-length': ['error', { min: 2, exceptions: ['i', 'j', 'x', 'y', 'a', 'b', '_'] }],
+  // Property names often come from Home Assistant's data formats, so only variables are checked.
+  'id-length': [
+    'error',
+    { min: 2, properties: 'never', exceptions: ['i', 'j', 'x', 'y', 'a', 'b', '_'] },
+  ],
   eqeqeq: ['error', 'always', { null: 'ignore' }],
   'no-var': 'error',
   'prefer-const': 'error',

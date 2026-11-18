@@ -1,7 +1,8 @@
 // A room as the card knows it: read from the room automation's blueprint inputs, published to
 // other users in the room directory, and the size of the state it needs.
 
-import { LIMITS } from './constants.js';
+import { LIMITS, STATE_MAX } from './constants.js';
+import { CardError } from './errors.js';
 
 /**
  * @typedef {object} Room A room: one automation made from the room blueprint.
@@ -112,4 +113,14 @@ export function stateSize(thermostats) {
   const state = Object.fromEntries(thermostats.map((entity) => [entity, [widest]]));
   const markers = { _open: thermostats.map(() => widest), _rc: 1, _rt: 99999999, _ex: 1 };
   return JSON.stringify({ ...state, ...markers }).length;
+}
+
+/**
+ * Refuse thermostats that a room's state helper could not hold (see stateSize).
+ * @param {string[]} thermostats
+ * @throws {CardError} code "state_size"
+ */
+export function checkStateSize(thermostats) {
+  const size = stateSize(thermostats);
+  if (size > STATE_MAX) throw new CardError('state_size', { size, max: STATE_MAX });
 }
