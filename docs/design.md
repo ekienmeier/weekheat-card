@@ -1,6 +1,6 @@
 # Weekheat design
 
-Status: built and in use (0.12). This document says how Weekheat works and why; it is kept up to date
+Status: built and in use (0.13). This document says how Weekheat works and why; it is kept up to date
 with each release. The rules for the code are in [coding-guidelines.md](coding-guidelines.md).
 
 ## Goal

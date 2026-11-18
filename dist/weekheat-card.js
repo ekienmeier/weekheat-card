@@ -974,8 +974,8 @@ function olderVersion(a3, b3) {
 }
 
 // src/version.js
-var VERSION = "0.12.1";
-var BLUEPRINT_VERSION = "0.12.1";
+var VERSION = "0.13.0";
+var BLUEPRINT_VERSION = "0.13.0";
 
 // src/ha/blueprints.js
 function outdated(domain, list, file) {

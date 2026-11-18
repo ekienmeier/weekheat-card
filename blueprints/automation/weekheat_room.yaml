@@ -20,7 +20,7 @@ blueprint:
     least the margin above the setpoint, and gives the setpoint back once the room has
     cooled down to it. A workaround for thermostats that ignore a linked sensor or
     overshoot (e.g. the Aqara W600); not needed for ones that control well.
-    Pairs with the Weekheat card (custom:weekheat-card). Weekheat 0.12.1
+    Pairs with the Weekheat card (custom:weekheat-card). Weekheat 0.13.0
   domain: automation
   source_url: https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/automation/weekheat_room.yaml
   input:
