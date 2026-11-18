@@ -42,8 +42,12 @@ class HA:
     def rest(self, method: str, path: str, body=None, timeout: float = 30):
         """Call `method` /api/`path` with a JSON body; return the decoded JSON answer (or text)."""
         data = json.dumps(body).encode() if body is not None else None
-        req = urllib.request.Request(f"{self.url}/api/{path}", data=data, method=method, headers={
-            "Authorization": f"Bearer {self.token}", "Content-Type": "application/json"})
+        req = urllib.request.Request(
+            f"{self.url}/api/{path}",
+            data=data,
+            method=method,
+            headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
+        )
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 text = r.read().decode()
@@ -93,9 +97,11 @@ class HA:
     def _upgrade(self, host: str):
         """Turn the connection into a WebSocket (the HTTP upgrade handshake)."""
         key = base64.b64encode(os.urandom(16)).decode()
-        request = (f"GET /api/websocket HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
-                   f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
-                   "Sec-WebSocket-Version: 13\r\n\r\n")
+        request = (
+            f"GET /api/websocket HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
+            f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+            "Sec-WebSocket-Version: 13\r\n\r\n"
+        )
         self._sock.sendall(request.encode())
         head = b""
         while b"\r\n\r\n" not in head:
@@ -106,9 +112,13 @@ class HA:
     def _send(self, obj: dict):
         payload = json.dumps(obj).encode()
         n = len(payload)
-        head = bytes([0x81]) + (bytes([0x80 | n]) if n < 126 else
-                                bytes([0x80 | 126]) + struct.pack(">H", n) if n < 65536 else
-                                bytes([0x80 | 127]) + struct.pack(">Q", n))
+        head = bytes([0x81]) + (
+            bytes([0x80 | n])
+            if n < 126
+            else bytes([0x80 | 126]) + struct.pack(">H", n)
+            if n < 65536
+            else bytes([0x80 | 127]) + struct.pack(">Q", n)
+        )
         mask = os.urandom(4)
         self._sock.sendall(head + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
 
@@ -169,6 +179,7 @@ def main():
     else:
         answer = ha.rest(args.method, args.path, json.loads(args.body) if args.body else None)
     print(json.dumps(answer, indent=2, ensure_ascii=False))
+
 
 if __name__ == "__main__":
     main()
