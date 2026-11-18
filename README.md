@@ -152,7 +152,11 @@ Node 22. `npm install`, then:
   to Home Assistant, `state/` the store and the actions, `ui/` the views and styles, `card.js` the element.
 - `tests/`: unit tests per layer, `npm test`; `npm run coverage` for the coverage.
 - `tools/ha.py`: a small REST/WebSocket client (URL and token from `~/.config/weekheat/`).
+- `tools/check_blueprints.py`: checks the blueprints against Home Assistant, read-only:
+  `validate` (HA's `validate_config` with the real inputs), `day` and `room` (a git ref against the working
+  copy: same days, same values, same writes?).
 - `tools/deploy_blueprint.py`: save a blueprint from this repo to Home Assistant.
+- `tools/compare_shots.mjs`: compares two folders of screenshots (pixels that differ, and a diff picture).
 - `tools/shoot.mjs`: screenshots of a dashboard with Playwright (card or whole page, dialogs included), with
   `CARD=dist/weekheat-card.js` in place of the installed card. **Read-only** unless `WRITE=1`: every command
   that would change something is refused (and listed in `OUT/refused.json`). `fake:<entity>=<setpoint>`

@@ -4,8 +4,12 @@ Home Assistant heating plans: a Lovelace card (source in `src/`, built to `dist/
 `npm run build`; the built file is committed) and two blueprints (`blueprints/`). Design and decisions:
 `docs/design.md`. Checks: `npm run check` (format, lint, types, tests; Node 22).
 
-Checks against the live Home Assistant: `tools/shoot.mjs` (read-only unless `WRITE=1`) and `tools/ha.py`
-(read with it; never write to the user's thermostats or helpers without asking).
+Checks against the live Home Assistant: `tools/shoot.mjs` (read-only unless `WRITE=1`),
+`tools/compare_shots.mjs`, `tools/check_blueprints.py` and `tools/ha.py` (read with it; never write to the
+user's thermostats, helpers or blueprints without asking).
+
+**Open work:** `docs/follow-up.md` is the plan for the points still open after 0.13.0, and says how to work
+on this project (tools, GitHub without `gh`, releasing, what can only be checked in CI). Start there.
 
 ## Coding guidelines
 
