@@ -148,7 +148,7 @@ class HA:
 
 
 def parser() -> argparse.ArgumentParser:
-    """The command line: a WebSocket command, or a REST call."""
+    """Build the command line's parser: a WebSocket command, or a REST call."""
     top = argparse.ArgumentParser(description="A small Home Assistant client for development.")
     kinds = top.add_subparsers(dest="kind", required=True)
     ws = kinds.add_parser("ws", help="send a WebSocket command")

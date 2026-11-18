@@ -1,6 +1,7 @@
 // ESLint: the rules of docs/coding-guidelines.md that a linter can check (section 3 there).
 import js from '@eslint/js';
 import jsdoc from 'eslint-plugin-jsdoc';
+import nounsanitized from 'eslint-plugin-no-unsanitized';
 import globals from 'globals';
 
 /** Size and shape of the code: guidelines 1.2, 1.3, 2.2 and 2.3. */
@@ -54,6 +55,8 @@ export default [
   { ignores: ['dist/', 'node_modules/'] },
   js.configs.recommended,
   jsdoc.configs['flat/recommended'],
+  // No hand-built HTML (guidelines 2.5): innerHTML and the like are flagged.
+  nounsanitized.configs.recommended,
   {
     files: ['**/*.js', '**/*.mjs'],
     languageOptions: { ecmaVersion: 2022, sourceType: 'module' },
