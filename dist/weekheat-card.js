@@ -1,4 +1,4 @@
-// ../../../node_modules/@lit/reactive-element/css-tag.js
+// node_modules/@lit/reactive-element/css-tag.js
 var t = globalThis;
 var e = t.ShadowRoot && (void 0 === t.ShadyCSS || t.ShadyCSS.nativeShadow) && "adoptedStyleSheets" in Document.prototype && "replace" in CSSStyleSheet.prototype;
 var s = Symbol();
@@ -43,7 +43,7 @@ var c = e ? (t5) => t5 : (t5) => t5 instanceof CSSStyleSheet ? ((t6) => {
   return r(e5);
 })(t5) : t5;
 
-// ../../../node_modules/@lit/reactive-element/reactive-element.js
+// node_modules/@lit/reactive-element/reactive-element.js
 var { is: i2, defineProperty: e2, getOwnPropertyDescriptor: h, getOwnPropertyNames: r2, getOwnPropertySymbols: o2, getPrototypeOf: n2 } = Object;
 var a = globalThis;
 var c2 = a.trustedTypes;
@@ -265,7 +265,7 @@ var y = class extends HTMLElement {
 };
 y.elementStyles = [], y.shadowRootOptions = { mode: "open" }, y[d("elementProperties")] = /* @__PURE__ */ new Map(), y[d("finalized")] = /* @__PURE__ */ new Map(), p?.({ ReactiveElement: y }), (a.reactiveElementVersions ??= []).push("2.1.2");
 
-// ../../../node_modules/lit-html/lit-html.js
+// node_modules/lit-html/lit-html.js
 var t2 = globalThis;
 var i3 = (t5) => t5;
 var s2 = t2.trustedTypes;
@@ -520,7 +520,7 @@ var D = (t5, i6, s5) => {
   return h4._$AI(t5), h4;
 };
 
-// ../../../node_modules/lit-element/lit-element.js
+// node_modules/lit-element/lit-element.js
 var s3 = globalThis;
 var i4 = class extends y {
   constructor() {
@@ -3816,11 +3816,11 @@ function commitSetup(ctx, room) {
   });
 }
 
-// ../../../node_modules/lit-html/directive-helpers.js
+// node_modules/lit-html/directive-helpers.js
 var { I: t3 } = j;
 var r4 = (o7) => void 0 === o7.strings;
 
-// ../../../node_modules/lit-html/directive.js
+// node_modules/lit-html/directive.js
 var t4 = { ATTRIBUTE: 1, CHILD: 2, PROPERTY: 3, BOOLEAN_ATTRIBUTE: 4, EVENT: 5, ELEMENT: 6 };
 var e4 = (t5) => (...e5) => ({ _$litDirective$: t5, values: e5 });
 var i5 = class {
@@ -3840,7 +3840,7 @@ var i5 = class {
   }
 };
 
-// ../../../node_modules/lit-html/async-directive.js
+// node_modules/lit-html/async-directive.js
 var s4 = (i6, t5) => {
   const e5 = i6._$AN;
   if (void 0 === e5) return false;
@@ -3897,7 +3897,7 @@ var f3 = class extends i5 {
   }
 };
 
-// ../../../node_modules/lit-html/directives/ref.js
+// node_modules/lit-html/directives/ref.js
 var o6 = /* @__PURE__ */ new WeakMap();
 var n5 = e4(class extends f3 {
   render(i6) {
