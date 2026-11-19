@@ -13,7 +13,7 @@ When a point here is done, update its line in the review's status table and remo
 
 ## Where things stand
 
-- `main` is release **v0.14.0** (on GitHub; installed through HACS as a custom repository). CI runs
+- `main` is release **v0.15.0** (on GitHub; installed through HACS as a custom repository). CI runs
   format, lint, types, the Node tests, the build check, yamllint, ruff, HACS's validation and the
   blueprint tests (`tests/blueprints/`) in a Home Assistant core (2025.7 and 2026.10).
 - 0.14.0 changed the blueprints: the room blueprint stores a fingerprint of its thermostats with saved
