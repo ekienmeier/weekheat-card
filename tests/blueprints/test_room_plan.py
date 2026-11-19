@@ -150,11 +150,6 @@ async def test_a_failing_day_script_lets_the_weekday_decide(home, how, days, wan
     assert [home.setpoint(A), home.setpoint(B)] == [wanted, wanted]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a day script that does not exist cannot be called, and continue_on_error does not "
-    "cover that (ServiceNotFound): the room's run stops before it writes anything",
-)
 async def test_a_missing_day_script_lets_the_weekday_decide(home):
     """The day script does not exist: the weekday should decide, as when it fails."""
     await home.start(Room(extra={"day_script": "script.no_such_day"}))

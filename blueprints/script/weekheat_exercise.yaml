@@ -7,6 +7,8 @@ blueprint:
     and when the card's "Run now" is pressed; it needs no settings. Pairs with the Weekheat
     card (custom:weekheat-card). Weekheat 0.13.0
   domain: script
+  homeassistant:
+    min_version: 2025.7.0
   source_url: https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/script/weekheat_exercise.yaml
 
 fields:

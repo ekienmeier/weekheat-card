@@ -23,6 +23,8 @@ blueprint:
     overshoot (e.g. the Aqara W600); not needed for ones that control well.
     Pairs with the Weekheat card (custom:weekheat-card). Weekheat 0.13.0
   domain: automation
+  homeassistant:
+    min_version: 2025.7.0
   source_url: https://github.com/ekienmeier/weekheat-card/blob/main/blueprints/automation/weekheat_room.yaml
   input:
     room_name:
@@ -425,11 +427,21 @@ actions:
             data:
               notification_id: "weekheat_{{ room_name | slugify }}_exercise"
 
-  # Today's day decision. If the day script fails, the weekday alone decides (Saturday and Sunday
-  # free), so that windows, the heating switch and the room sensor still work.
-  - action: "{{ day_script }}"
-    continue_on_error: true
-    response_variable: day_info
+  # Today's day decision. If the day script fails or is missing, the weekday alone decides
+  # (Saturday and Sunday free), so that windows, the heating switch and the room sensor still
+  # work. A missing script cannot be called (continue_on_error does not cover it), so it is
+  # called only when it exists; its answer is passed out of the branch with a variables step.
+  - variables:
+      day_info: null
+  - if:
+      - condition: template
+        value_template: "{{ has_value(day_script) }}"
+    then:
+      - action: "{{ day_script }}"
+        continue_on_error: true
+        response_variable: day_reply
+      - variables:
+          day_info: "{{ day_reply | default(none) }}"
   # Today's plan and the setpoint it wants, what was applied, and the inputs' states now.
   - variables:
       day: >-

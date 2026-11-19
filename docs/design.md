@@ -487,7 +487,8 @@ loader and the actions), `ui/` (the views, with [Lit](https://lit.dev), and the 
 
 - HA 2025.7 or later: the blueprints' object selectors with `fields` (the week, the keyword rules)
   need it; on 2025.4 neither the room automation nor the day script loads (found by the blueprint
-  tests, 2026-11-19). Also needed: schedule block data (2025.3), script responses.
+  tests, 2026-11-19); the blueprints say so (`homeassistant: min_version`), so an older HA refuses
+  to import them. Also needed: schedule block data (2025.3), script responses.
 - Workday integration (weekend days, country/region), Holiday integration (holiday names).
 - Calendars with the keyword events (e.g. CalDAV), and a Local Calendar for the exceptions.
 - **The thermostats' own schedules switched off**, otherwise they overwrite the plan at their own
@@ -525,9 +526,10 @@ loader and the actions), `ui/` (the views, with [Lit](https://lit.dev), and the 
   (`tests/fixtures/plan-names.json`, review M16). Not covered: an HA restart across a boundary (the
   `homeassistant` start trigger does not fire in a core that is already running), the late
   notification, and the size guard of the state helper.
-- Known gap, shown by an expected failure (`xfail`): a day script that does not exist stops the room's
-  run (`ServiceNotFound` is not covered by `continue_on_error`), so windows and the heating switch do
-  not work either; the valve exercise guards against the same with `has_value`.
+- A day script that does not exist would stop the room's run (`ServiceNotFound` is not covered by
+  `continue_on_error`), so the room calls it only when `has_value(day_script)`, as it does the
+  valve exercise; otherwise the weekday decides. A test checks it (found by these tests, fixed in
+  0.14.0).
 - Seen in the tests: when a room changes plan helper at midnight (Friday's Werktag, Saturday's Freier
   Tag), the first helper's midnight update can start a run that reads the other helper before it has
   moved to the new day, so the room writes that helper's value of the evening before and, a moment
