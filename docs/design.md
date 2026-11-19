@@ -528,6 +528,11 @@ loader and the actions), `ui/` (the views, with [Lit](https://lit.dev), and the 
 - Known gap, shown by an expected failure (`xfail`): a day script that does not exist stops the room's
   run (`ServiceNotFound` is not covered by `continue_on_error`), so windows and the heating switch do
   not work either; the valve exercise guards against the same with `has_value`.
+- Seen in the tests: when a room changes plan helper at midnight (Friday's Werktag, Saturday's Freier
+  Tag), the first helper's midnight update can start a run that reads the other helper before it has
+  moved to the new day, so the room writes that helper's value of the evening before and, a moment
+  later, the right one (two writes instead of one; on 2026.10, not on 2025.7). Harmless for comfort;
+  the test checks the setpoints reached.
 
 ## Decisions (2026-11-13)
 

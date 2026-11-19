@@ -74,8 +74,11 @@ scripts and the automation, `home.at("07:00:01", days=…)` lets time pass timer
 would fire every timer at the end, so a tick could run the room before a schedule changed its
 period), `home.run()` triggers the room as the card does, `home.thermostat(...)` changes a setpoint
 by hand, `home.taken()` returns the writes since the last call, `home.stored()` the state helper.
-To debug a failure, read the job's log (the workflow runs `pytest -v`; captured log lines show the
-automation's own errors, e.g. a blueprint that does not validate). To try a new case quickly, push
+To debug a failure, read the job's log (the workflow runs `pytest -v`): for a failed test it shows
+the captured output, every state change and write with its time (`home.py` prints them), and the
+captured log, with the automation's own errors (e.g. a blueprint that does not validate). Get the
+log with `GET /repos/…/actions/jobs/<id>/logs` and `curl -L` (it redirects to storage that must
+not get the token). To try a new case quickly, push
 the branch and run only it with a temporary `-k` in the workflow (do not commit that). When a
 release of the package moves to a new Home Assistant, raise the pin of the recent row; keep the
 oldest row at the oldest release the blueprints support. `tests/fixtures/plan-names.json` holds
