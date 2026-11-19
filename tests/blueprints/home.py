@@ -337,6 +337,10 @@ class Home:
         if not whens:
             return None
         seconds = max(min(whens) - loop.time() + TOGETHER, MIN_STEP)
+        import time as _t
+
+        soon = sorted((h for h in handles if not h.cancelled()), key=lambda h: h.when())[:3]
+        print("DUE", loop.time(), _t.monotonic(), _t.time(), [(h.when(), repr(h)[:150]) for h in soon])
         return dt_util.utcnow() + timedelta(seconds=seconds)
 
     async def settle(self, step: float = 1.0) -> None:
