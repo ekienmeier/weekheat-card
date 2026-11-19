@@ -46,7 +46,7 @@ Status: early (0.13). Tested with Aqara E1/W600 thermostats through HomeKit Cont
 
 ## Requirements
 
-- Home Assistant 2025.4 or later (tested on 2026.11).
+- Home Assistant 2025.7 or later (tested on 2026.11; the blueprint tests run on 2025.7 and 2026.10).
 - The [Workday](https://www.home-assistant.io/integrations/workday/) integration (weekend days, public holidays).
 - A [Local Calendar](https://www.home-assistant.io/integrations/local_calendar/) for the exceptions.
 - Optional: the [Holiday](https://www.home-assistant.io/integrations/holiday/) integration (holiday

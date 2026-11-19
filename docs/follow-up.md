@@ -13,7 +13,8 @@ When a point here is done, update its line in the review's status table and remo
 ## Where things stand
 
 - `main` is release **v0.13.0** (on GitHub and in HACS). CI passes on it: format, lint, types, 80
-  tests, the build check, yamllint, ruff and HACS's validation. The branch `refactor` is merged and
+  tests, the build check, yamllint, ruff and HACS's validation. Since then CI also runs the
+  blueprint tests (`tests/blueprints/`) in a Home Assistant core. The branch `refactor` is merged and
   can be deleted.
 - The owner updates their Home Assistant themselves. On 2026-11-18 it still ran the 0.12 card and
   the 0.12.0 blueprints. Before any check against it, see what it runs: the card logs its version in
@@ -63,6 +64,25 @@ helpers, automations or blueprints without asking.
   and thermostats changed while held; `--ignore-key _th` leaves the fingerprint out when comparing
   with a release before it (against `v0.13.0`, only the *changed* and *no script* scenarios differ).
 
+**Blueprint tests** (`tests/blueprints/`, review M18). pytest with
+`pytest-homeassistant-custom-component` (pinned in `requirements-<HA>.txt`, one per Home Assistant
+release: 2025.7 is the oldest the blueprints load in, 2026.10 a recent one) runs the blueprints in a
+Home Assistant core. They run only in CI (job *blueprints*, one per release); Python packages cannot
+be installed here. `home.py` is the test home: `Room(...)` describes a room automation (its inputs;
+`extra` for windows, sensor, switch, exercise), `home.start(room)` sets up plans, state helper,
+scripts and the automation, `home.at("07:00:01", days=…)` lets time pass timer by timer (one jump
+would fire every timer at the end, so a tick could run the room before a schedule changed its
+period), `home.run()` triggers the room as the card does, `home.thermostat(...)` changes a setpoint
+by hand, `home.taken()` returns the writes since the last call, `home.stored()` the state helper.
+To debug a failure, read the job's log (the workflow runs `pytest -v`; captured log lines show the
+automation's own errors, e.g. a blueprint that does not validate). To try a new case quickly, push
+the branch and run only it with a temporary `-k` in the workflow (do not commit that). When a
+release of the package moves to a new Home Assistant, raise the pin of the recent row; keep the
+oldest row at the oldest release the blueprints support. `tests/fixtures/plan-names.json` holds
+the plan-name cases that the Node tests (`tests/domain/plan-names.test.mjs`) and the Python tests
+(`test_plan_names.py`, which renders the blueprint's templates) both check; add a case there, not
+in one of them.
+
 **GitHub.** There is no `gh` CLI. The token is in `~/.config/weekheat/github_token`; use the REST
 API (curl or Python): workflow runs `GET /repos/ekienmeier/weekheat-card/actions/runs?head_sha=…`,
 their jobs and logs, releases `POST /repos/ekienmeier/weekheat-card/releases` with `tag_name` and
@@ -82,24 +102,6 @@ a template answer like `255` comes back as a number.
 ## Open points, in a sensible order
 
 Each says what is wrong, where, a way to fix it, how to check it, and what it means for the version.
-
-### 7. M18: automated tests of the blueprints
-
-- **Problem.** The blueprints' logic is checked only by hand: `tools/check_blueprints.py` against the
-  live Home Assistant, and the live tests listed in design.md. Nothing runs in CI.
-- **Approach.** Python tests with `pytest-homeassistant-custom-component` (it pins a Home Assistant
-  version and gives a `hass` fixture): copy the three blueprints into the test config, create the
-  day and exercise scripts and a room automation from them, register thermostat states with
-  `hass.states.async_set`, mock `climate.set_temperature`, `calendar.get_events` and `workday.check_date` with
-  `async_mock_service` (with responses), and drive time with `async_fire_time_changed`. Start with the
-  cases in design.md's *Testing*: a period boundary, a manual change that holds, equal adjacent
-  periods, midnight, a window opening and closing, the room sensor closing and releasing, the heating
-  switch, a failing day script. A CI job with a pinned Python and that package.
-- **Also (M16's rest).** The plan-name rule exists in the card (`matchPlan`) and in the room blueprint
-  (`plan_hits`, `named_plan`). Put shared cases into a JSON fixture (e.g. `tests/fixtures/plan-names.json`)
-  that the Node tests and the Python tests (rendering the blueprint's templates with HA's `Template`)
-  both check.
-- **Version.** None (tests only).
 
 ### 9. Not planned: the default HACS store
 

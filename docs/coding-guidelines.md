@@ -232,8 +232,9 @@ and 1.2 for function length. Formatted and checked with ruff.
 - Unit tests are fast and need no Home Assistant. Live tests on a real Home Assistant are listed in
   `docs/design.md` (*Testing*), with their date and result.
 - `domain/` keeps at least 90 % line coverage (`node --test --experimental-test-coverage`).
-- Blueprint logic gets automated tests against a real Home Assistant core (for example with
-  `pytest-homeassistant-custom-component`); until then, the live tests are documented.
+- Blueprint logic has automated tests against a real Home Assistant core (`tests/blueprints/`, with
+  `pytest-homeassistant-custom-component`, in CI). A change to a blueprint's behaviour comes with
+  a test there.
 
 ### 2.11 Working
 

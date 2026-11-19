@@ -166,6 +166,7 @@ class Home:
     def register_fakes(self) -> None:
         """Register the fake climate, calendar and workday services and the day sources."""
         services = self.hass.services
+        self.hass.bus.async_listen("state_changed", self._trace)
         services.async_register("climate", "set_temperature", self._set_temperature)
         services.async_register("climate", "set_hvac_mode", self._set_hvac_mode)
         only = SupportsResponse.ONLY
@@ -177,11 +178,21 @@ class Home:
             self.hass.states.async_set(calendar, "off")
 
     @callback
+    def _trace(self, event) -> None:
+        """Print each state change with the time (pytest shows it when a test fails)."""
+        state = event.data["new_state"]
+        if state is None or state.domain in ("automation", "script"):
+            return
+        temp = state.attributes.get("temperature")
+        print(f"{dt_util.now():%a %H:%M:%S.%f} {state.entity_id} = {state.state} ({temp})")
+
+    @callback
     def _set_temperature(self, call: ServiceCall) -> None:
         """Take a setpoint, as a thermostat does (an unavailable one ignores it)."""
         for entity in call.data["entity_id"]:
             temp = float(call.data["temperature"])
             self.writes.append([entity, temp])
+            print(f"{dt_util.now():%a %H:%M:%S.%f} write {entity} {temp}")
             state = self.hass.states.get(entity)
             if state.state == "unavailable":
                 continue

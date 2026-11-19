@@ -485,8 +485,9 @@ loader and the actions), `ui/` (the views, with [Lit](https://lit.dev), and the 
 
 ## Prerequisites in HA
 
-- HA 2025.4 or later (schedule block data, script responses, variable scoping in loops; to be
-  confirmed while building).
+- HA 2025.7 or later: the blueprints' object selectors with `fields` (the week, the keyword rules)
+  need it; on 2025.4 neither the room automation nor the day script loads (found by the blueprint
+  tests, 2026-11-19). Also needed: schedule block data (2025.3), script responses.
 - Workday integration (weekend days, country/region), Holiday integration (holiday names).
 - Calendars with the keyword events (e.g. CalDAV), and a Local Calendar for the exceptions.
 - **The thermostats' own schedules switched off**, otherwise they overwrite the plan at their own
@@ -503,6 +504,30 @@ loader and the actions), `ui/` (the views, with [Lit](https://lit.dev), and the 
   across a boundary; the thermostat unavailable (write retried).
 - Card: logic (period at a time, plan for a date, wanted vs. actual, slugs, de/en strings) as plain JS
   unit tests; layout with a screenshot harness like Temperate's.
+- **Blueprint tests** (review M18, `tests/blueprints/`, in CI only): pytest with
+  `pytest-homeassistant-custom-component` runs the three blueprints, unchanged, in a Home Assistant
+  core, on the oldest release they load in (2025.7) and a recent one (2026.10). Real schedule
+  helpers are the plans and a real `input_text` the state helper; the thermostats are states whose
+  setpoint follows `climate.set_temperature`, and `calendar.get_events` and `workday.check_date`
+  answer from the test's events and holidays; time is driven with freezegun, timer by timer. The
+  room *Bad* has two thermostats and the starter plans. Covered: a period boundary; a manual change
+  that holds over ticks and plan updates; equal adjacent periods; Off across midnight keeping a
+  manual value, and the next day's plan at midnight; a thermostat unavailable at a boundary, written
+  when back; the day script's answers (working day, public holiday, keyword event, exceptions with
+  and without a plan name, a keyword rule naming a plan); a failing day script (one that raises an
+  error and one that answers nothing; Monday and Saturday); a window (the delay, a short opening,
+  setpoints by hand restored, a new period while open); the room sensor closing and releasing after
+  the hold time; the heating switch (off holds 5 °C and ignores windows); the fingerprint `_th`
+  (thermostats moved, replaced or removed while held return to the plan; a state without `_th`
+  still restores); the valve exercise through `script.weekheat_exercise` (moves, setpoints and modes
+  given back, the `_ex` marker, *Run now* for other rooms only) and the notification when the
+  script is missing. The plan-name rule is checked against the card with shared cases
+  (`tests/fixtures/plan-names.json`, review M16). Not covered: an HA restart across a boundary (the
+  `homeassistant` start trigger does not fire in a core that is already running), the late
+  notification, and the size guard of the state helper.
+- Known gap, shown by an expected failure (`xfail`): a day script that does not exist stops the room's
+  run (`ServiceNotFound` is not covered by `continue_on_error`), so windows and the heating switch do
+  not work either; the valve exercise guards against the same with `has_value`.
 
 ## Decisions (2026-11-13)
 
