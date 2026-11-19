@@ -1,0 +1,180 @@
+{
+  "about": "The plan-name rule, which exists twice: matchPlan and slugify in the card (src/domain/plans.js) and plan_hits, named_plan and the slugify filter in the room blueprint. tests/domain/plan-names.test.mjs checks the card and tests/blueprints/test_plan_names.py the blueprint, both with these cases (review M16, L7). A case: the room's name, its plans in the room's order as [entity id, friendly name or null], the plan name a day carries, and the plan it picks (null: none).",
+  "slugs": [
+    ["Søren", "soren"],
+    ["Æble Øl", "aeble_ol"],
+    ["Cœur œuvre", "coeur_oeuvre"],
+    ["Łódź", "lodz"],
+    ["Đorđe", "dorde"],
+    ["Þór", "thor"],
+    ["Ðað", "dad"],
+    ["Straße", "strasse"],
+    ["ẞ", "ss"],
+    ["Groß Fuß", "gross_fuss"],
+    ["Bäder Öfen Über", "bader_ofen_uber"],
+    ["Nüsse & Ähren", "nusse_ahren"],
+    ["Café été", "cafe_ete"],
+    ["Ångström", "angstrom"],
+    ["Æsir ÆØÅ", "aesir_aeoa"],
+    ["Ærø", "aero"],
+    ["Smørrebrød", "smorrebrod"],
+    ["Œdipe", "oedipe"],
+    ["Œ œ Æ æ Ø ø", "oe_oe_ae_ae_o_o"],
+    ["ŁŁ łł", "ll_ll"],
+    ["Ĳssel", "ijssel"],
+    ["Çağrı", "cagri"],
+    ["İstanbul ı", "istanbul_i"],
+    ["Ħamrun", "hamrun"],
+    ["Ŧ ŧ", "t_t"],
+    ["Ŋŋ", "ngng"],
+    ["ĸ", "k"],
+    ["ſ", "s"],
+    ["ﬁne ﬂow", "fine_flow"],
+    ["Ŀl ŀl", "l_l_l_l"],
+    ["Șt Ţ", "st_t"],
+    ["ÆØÅ-Plan", "aeoa_plan"],
+    [" Bad  Werktag! ", "bad_werktag"],
+    ["Home-Office 2", "home_office_2"],
+    ["Freier Tag", "freier_tag"],
+    ["Küche Straße", "kuche_strasse"],
+    [" Home-Office! ", "home_office"]
+  ],
+  "cases": [
+    {
+      "about": "the plan of that name, ignoring case",
+      "room": "Bad",
+      "plans": [
+        ["schedule.bad_werktag", "Bad Werktag"],
+        ["schedule.bad_homeoffice", "Bad Homeoffice"],
+        ["schedule.x", "Bad Home office"]
+      ],
+      "name": "Homeoffice",
+      "match": "schedule.bad_homeoffice"
+    },
+    {
+      "about": "names are compared as slugs, so spaces and dashes are alike",
+      "room": "Bad",
+      "plans": [
+        ["schedule.bad_werktag", "Bad Werktag"],
+        ["schedule.bad_homeoffice", "Bad Homeoffice"],
+        ["schedule.x", "Bad Home office"]
+      ],
+      "name": "home office",
+      "match": "schedule.x"
+    },
+    {
+      "about": "a name no plan has",
+      "room": "Bad",
+      "plans": [
+        ["schedule.bad_werktag", "Bad Werktag"],
+        ["schedule.bad_homeoffice", "Bad Homeoffice"]
+      ],
+      "name": "Urlaub",
+      "match": null
+    },
+    {
+      "about": "no name",
+      "room": "Bad",
+      "plans": [["schedule.bad_werktag", "Bad Werktag"]],
+      "name": "",
+      "match": null
+    },
+    {
+      "about": "a name with ø, by the entity id the card gives it (L7)",
+      "room": "Bad",
+      "plans": [["schedule.weekheat_bad_smorrebrod", null]],
+      "name": "Smørrebrød",
+      "match": "schedule.weekheat_bad_smorrebrod"
+    },
+    {
+      "about": "a name with ß, by the friendly name",
+      "room": "Küche",
+      "plans": [
+        ["schedule.weekheat_kuche_werktag", "Küche Werktag"],
+        ["schedule.plan_7", "Küche Straße"]
+      ],
+      "name": "strasse",
+      "match": "schedule.plan_7"
+    },
+    {
+      "about": "exactly that name, not one that ends like it (H2)",
+      "room": "Bad",
+      "plans": [
+        ["schedule.weekheat_bad_kurzer_werktag", "Bad Kurzer Werktag"],
+        ["schedule.weekheat_bad_werktag", "Bad Werktag"]
+      ],
+      "name": "Werktag",
+      "match": "schedule.weekheat_bad_werktag"
+    },
+    {
+      "about": "without friendly names, the entity id the card gives a plan of that name (H2)",
+      "room": "Bad",
+      "plans": [
+        ["schedule.weekheat_bad_kein_homeoffice", null],
+        ["schedule.weekheat_bad_homeoffice", null]
+      ],
+      "name": "Homeoffice",
+      "match": "schedule.weekheat_bad_homeoffice"
+    },
+    {
+      "about": "a renamed plan, by its name (H2)",
+      "room": "Wohnzimmer",
+      "plans": [
+        ["schedule.weekheat_wohnzimmer_working_day", "Wohnzimmer Werktag"],
+        ["schedule.weekheat_wohnzimmer_free_day", "Wohnzimmer Wochenende"]
+      ],
+      "name": "wochenende",
+      "match": "schedule.weekheat_wohnzimmer_free_day"
+    },
+    {
+      "about": "a renamed plan, by the entity id the card gave it (H2)",
+      "room": "Wohnzimmer",
+      "plans": [
+        ["schedule.weekheat_wohnzimmer_working_day", "Wohnzimmer Werktag"],
+        ["schedule.weekheat_wohnzimmer_free_day", "Wohnzimmer Wochenende"]
+      ],
+      "name": "Free day",
+      "match": "schedule.weekheat_wohnzimmer_free_day"
+    },
+    {
+      "about": "a name that only ends like several plans picks none (H2)",
+      "room": "Badezimmer",
+      "plans": [
+        ["schedule.bad_kurzer_werktag", null],
+        ["schedule.bad_langer_werktag", null]
+      ],
+      "name": "Werktag",
+      "match": null
+    },
+    {
+      "about": "one plan whose entity id ends like the name, e.g. after the room was renamed (H2)",
+      "room": "Badezimmer",
+      "plans": [
+        ["schedule.bad_werktag", null],
+        ["schedule.bad_frei", null]
+      ],
+      "name": "Werktag",
+      "match": "schedule.bad_werktag"
+    },
+    {
+      "about": "one plan whose friendly name ends like the name",
+      "room": "Bad",
+      "plans": [
+        ["schedule.plan_1", "Altes Bad Home office"],
+        ["schedule.plan_2", "Altes Bad Werktag"]
+      ],
+      "name": "Home office",
+      "match": "schedule.plan_1"
+    },
+    {
+      "about": "the room's name is left out of the friendly name, ignoring case",
+      "room": "Wohnzimmer",
+      "plans": [
+        ["schedule.plan_1", "wohnzimmer Ferien"],
+        ["schedule.plan_2", "Wohnzimmer Wohnzimmer Ferien"]
+      ],
+      "name": "Ferien",
+      "match": "schedule.plan_1"
+    }
+  ]
+}

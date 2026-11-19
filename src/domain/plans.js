@@ -16,7 +16,8 @@
 /**
  * Latin letters that Home Assistant's slugify (python-slugify with unidecode) spells with other
  * letters, and that Unicode's NFKD leaves whole (it only splits off accents and ligatures). Read
- * from `{{ name | slugify }}` on Home Assistant 2026.11; tests/domain/plans.test.mjs has the pairs.
+ * from `{{ name | slugify }}` on Home Assistant 2026.11; tests/fixtures/plan-names.json has the
+ * pairs.
  */
 const TRANSLITERATION = {
   ß: 'ss',
@@ -106,7 +107,8 @@ function exactPlans(want, plans, { friendly = {}, room = '' }) {
  * The plan of a room that a plan name (from an exception or a keyword rule) refers to, or null.
  * An exact match first (exactPlans). Only then a plan whose entity id or name ends with the name,
  * and only if exactly one does ("Werktag" must not pick "Kurzer Werktag").
- * The same rule is `plan_hits` and `named_plan` in the room blueprint; keep both alike.
+ * The same rule is `plan_hits` and `named_plan` in the room blueprint; keep both alike (the
+ * cases in tests/fixtures/plan-names.json check both).
  * @param {string} name the plan name
  * @param {string[]} plans the room's plan entity ids, in the room's order
  * @param {PlanNames} [names]

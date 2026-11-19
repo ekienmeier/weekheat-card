@@ -1,60 +1,8 @@
-// Tests of src/domain/plans.js. H2 marks the regression tests of review finding H2 (0.12.1).
+// Tests of src/domain/plans.js. The plan-name rule (matchPlan, slugify) is tested with the cases
+// shared with the room blueprint, in plan-names.test.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dayOf, matchPlan, planForDay, planLabel, slugify } from '../../src/domain/plans.js';
-
-test('slugify like Home Assistant for German names', () => {
-  assert.equal(slugify('Freier Tag'), 'freier_tag');
-  assert.equal(slugify('Küche Straße'), 'kuche_strasse');
-  assert.equal(slugify(' Home-Office! '), 'home_office');
-});
-
-/** Names and what `{{ name | slugify }}` gave on Home Assistant 2026.11 (L7, 2026-11-18). */
-const HA_SLUGS = [
-  ['Søren', 'soren'],
-  ['Æble Øl', 'aeble_ol'],
-  ['Cœur œuvre', 'coeur_oeuvre'],
-  ['Łódź', 'lodz'],
-  ['Đorđe', 'dorde'],
-  ['Þór', 'thor'],
-  ['Ðað', 'dad'],
-  ['Straße', 'strasse'],
-  ['ẞ', 'ss'],
-  ['Groß Fuß', 'gross_fuss'],
-  ['Bäder Öfen Über', 'bader_ofen_uber'],
-  ['Nüsse & Ähren', 'nusse_ahren'],
-  ['Café été', 'cafe_ete'],
-  ['Ångström', 'angstrom'],
-  ['Æsir ÆØÅ', 'aesir_aeoa'],
-  ['Ærø', 'aero'],
-  ['Smørrebrød', 'smorrebrod'],
-  ['Œdipe', 'oedipe'],
-  ['Œ œ Æ æ Ø ø', 'oe_oe_ae_ae_o_o'],
-  ['ŁŁ łł', 'll_ll'],
-  ['Ĳssel', 'ijssel'],
-  ['Çağrı', 'cagri'],
-  ['İstanbul ı', 'istanbul_i'],
-  ['Ħamrun', 'hamrun'],
-  ['Ŧ ŧ', 't_t'],
-  ['Ŋŋ', 'ngng'],
-  ['ĸ', 'k'],
-  ['ſ', 's'],
-  ['ﬁne ﬂow', 'fine_flow'],
-  ['Ŀl ŀl', 'l_l_l_l'],
-  ['Șt Ţ', 'st_t'],
-  ['ÆØÅ-Plan', 'aeoa_plan'],
-  [' Bad  Werktag! ', 'bad_werktag'],
-  ['Home-Office 2', 'home_office_2'],
-];
-
-test("slugify gives Home Assistant's slugs for Latin letters (L7)", () => {
-  for (const [name, slug] of HA_SLUGS) assert.equal(slugify(name), slug, name);
-});
-
-test('a plan named with ø matches its slug as Home Assistant makes it (L7)', () => {
-  const plans = ['schedule.weekheat_bad_smorrebrod'];
-  assert.equal(matchPlan('Smørrebrød', plans, { room: 'Bad' }), plans[0]);
-});
+import { dayOf, planForDay, planLabel } from '../../src/domain/plans.js';
 
 test('plan labels leave out the room name', () => {
   assert.equal(planLabel('Bad Werktag', 'Bad'), 'Werktag');
@@ -72,14 +20,6 @@ const FRIENDLY = {
   'schedule.x': 'Bad Home office',
 };
 
-test('a plan name matches by the plan name, ignoring case and spelling of spaces', () => {
-  const names = { friendly: FRIENDLY, room: 'Bad' };
-  assert.equal(matchPlan('Homeoffice', PLANS, names), 'schedule.bad_homeoffice');
-  assert.equal(matchPlan('home office', PLANS, names), 'schedule.x');
-  assert.equal(matchPlan('Urlaub', PLANS, names), null);
-  assert.equal(matchPlan('', PLANS, names), null);
-});
-
 test('planForDay: a named plan, else the free-day plan, else the week', () => {
   const room = { name: 'Bad', plans: PLANS, free_day: 'schedule.x', week: { fri: PLANS[1] } };
   const day = (fields) => ({ date: '2026-11-13', kind: 'plain', ...fields });
@@ -90,34 +30,6 @@ test('planForDay: a named plan, else the free-day plan, else the week', () => {
   assert.equal(planForDay(room, named, FRIENDLY), PLANS[1]);
   const unknown = day({ weekday: 'mon', free: false, plan: 'Urlaub' });
   assert.equal(planForDay(room, unknown, FRIENDLY), PLANS[0]);
-});
-
-test('a plan name picks the plan of exactly that name, not one that ends like it (H2)', () => {
-  const plans = ['schedule.weekheat_bad_kurzer_werktag', 'schedule.weekheat_bad_werktag'];
-  const friendly = { [plans[0]]: 'Bad Kurzer Werktag', [plans[1]]: 'Bad Werktag' };
-  assert.equal(matchPlan('Werktag', plans, { friendly, room: 'Bad' }), plans[1]);
-  const office = ['schedule.weekheat_bad_kein_homeoffice', 'schedule.weekheat_bad_homeoffice'];
-  assert.equal(matchPlan('Homeoffice', office, { room: 'Bad' }), office[1]);
-});
-
-test('a renamed plan is found by its name, then by the entity id the card gave it (H2)', () => {
-  const plans = [
-    'schedule.weekheat_wohnzimmer_working_day',
-    'schedule.weekheat_wohnzimmer_free_day',
-  ];
-  const friendly = { [plans[0]]: 'Wohnzimmer Werktag', [plans[1]]: 'Wohnzimmer Wochenende' };
-  const names = { friendly, room: 'Wohnzimmer' };
-  assert.equal(matchPlan('Werktag', plans, names), plans[0]);
-  assert.equal(matchPlan('wochenende', plans, names), plans[1]);
-  assert.equal(matchPlan('Free day', plans, names), plans[1]);
-});
-
-test('a name that only ends like several plans picks none of them (H2)', () => {
-  const plans = ['schedule.bad_kurzer_werktag', 'schedule.bad_langer_werktag'];
-  assert.equal(matchPlan('Werktag', plans, { room: 'Badezimmer' }), null);
-  // ...but one such plan is still found, e.g. after the room was renamed
-  const renamed = ['schedule.bad_werktag', 'schedule.bad_frei'];
-  assert.equal(matchPlan('Werktag', renamed, { room: 'Badezimmer' }), 'schedule.bad_werktag');
 });
 
 test('dayOf finds today, or makes a plain working day', () => {
