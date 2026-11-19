@@ -67,8 +67,8 @@ async def test_a_new_period_while_open_is_given_on_closing(home):
     assert home.taken() == [[A, 21.0], [B, 21.0]]
 
 
-async def test_the_room_sensor_closes_the_valves_and_releases_them(home):
-    """Room 19 °C at the 17 °C period: closed; cooled to the setpoint: released after the hold."""
+async def closed_by_the_room_sensor(home) -> None:
+    """Start a room at 19 °C with a room sensor; at 07:00 (17 °C) it closes the valves."""
     home.set(SENSOR, "19.0")
     extra = {"room_sensor": SENSOR, "room_margin": 0.5, "room_hold": 10}
     await home.start(Room(extra=extra))
@@ -76,6 +76,11 @@ async def test_the_room_sensor_closes_the_valves_and_releases_them(home):
     await home.run()
     assert home.taken() == [[A, 21.0], [B, 21.0]]
     await home.at("07:00:01")
+
+
+async def test_the_room_sensor_closes_the_valves_and_releases_them(home):
+    """Room 19 °C at the 17 °C period: closed; cooled to the setpoint: released after the hold."""
+    await closed_by_the_room_sensor(home)
     assert home.taken() == [[A, OFF], [B, OFF]]
     assert home.stored()["_open"] == [17.0, 17.0]
     assert home.stored()["_rc"] == 1

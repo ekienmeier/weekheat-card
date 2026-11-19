@@ -1,2 +1,0 @@
-# The oldest Home Assistant the blueprints support (design.md, Prerequisites): 2025.4.4.
-pytest-homeassistant-custom-component==0.13.236

@@ -4,6 +4,8 @@ See home.py for the test home (Monday 2026-11-16, room "Bad" with two thermostat
 17 °C from 07:00 to 17:00).
 """
 
+import json
+
 from home import OFF, Room
 
 A, B = "climate.bad_a", "climate.bad_b"
@@ -38,7 +40,7 @@ async def test_the_exercise_moves_the_valves_and_gives_everything_back(home):
     await home.at("13:00:00")
     assert home.taken() == [*MOVES, [A, 17.0], [B, 17.0]]
     assert home.modes == [[B, "heat"], [B, "off"]]
-    assert any('"_ex": 1' in value for value in marks)
+    assert any(json.loads(value).get("_ex") == 1 for value in marks if value.startswith("{"))
     assert home.stored() == {A: [17.0], B: [17.0]}
 
 

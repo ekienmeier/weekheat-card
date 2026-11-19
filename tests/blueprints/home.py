@@ -21,6 +21,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, cal
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
+from homeassistant.util.async_ import get_scheduled_timer_handles
 from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
     async_get_persistent_notifications,
@@ -46,8 +47,10 @@ EXCEPTIONS = "calendar.weekheat_exceptions"
 FAMILY = "calendar.family"
 # How often the test lets the loop run between two checks whether the runs are done.
 YIELDS = 200
-# The most steps of time a test lets pass while waiting for runs to end.
+# The most steps of time a test lets pass while waiting for runs to end, or to reach a time.
 MAX_STEPS = 2000
+# The shortest step of time between two timers, in seconds (so that time always moves on).
+MIN_STEP = 1.0
 
 
 def blocks(periods: list) -> list:
@@ -276,15 +279,38 @@ class Home:
         zone = dt_util.get_default_time_zone()
         target = datetime.combine(date, time.fromisoformat(clock), tzinfo=zone)
         assert target >= dt_util.now(), "time only runs forward"
+        await self.until(target)
+
+    async def wait(self, seconds: float) -> None:
+        """Let some seconds pass, firing what is due."""
+        await self.until(dt_util.utcnow() + timedelta(seconds=seconds))
+
+    async def until(self, target: datetime) -> None:
+        """Let time pass to a moment, timer by timer, so that each fires at its own time.
+
+        One jump would fire them all at the end, in their order but each seeing the final time:
+        a 15-minute tick would then run the room before a schedule helper changed its period.
+        """
+        for _ in range(MAX_STEPS):
+            due = self._next_due()
+            if due is None or due >= target:
+                break
+            self.freezer.move_to(due)
+            async_fire_time_changed(self.hass)
+            await self.settle()
         self.freezer.move_to(target)
         async_fire_time_changed(self.hass)
         await self.settle()
 
-    async def wait(self, seconds: float) -> None:
-        """Let some seconds pass, firing what is due."""
-        self.freezer.tick(seconds)
-        async_fire_time_changed(self.hass)
-        await self.settle()
+    def _next_due(self) -> datetime | None:
+        """Return when the next timer is due (at least a second from now), or None."""
+        loop = self.hass.loop
+        handles = get_scheduled_timer_handles(loop)
+        whens = [handle.when() for handle in handles if not handle.cancelled()]
+        if not whens:
+            return None
+        seconds = max(min(whens) - loop.time(), MIN_STEP)
+        return dt_util.utcnow() + timedelta(seconds=seconds)
 
     async def settle(self, step: float = 1.0) -> None:
         """Let the runs end; while one waits (a delay, a timeout), let time pass in steps."""
