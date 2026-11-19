@@ -317,7 +317,10 @@ class Home:
 
         One jump would fire them all at the end, in their order but each seeing the final time:
         a 15-minute tick would then run the room before a schedule helper changed its period.
+        What the test changed just before is handled first, at the time it changed (Home
+        Assistant 2025.7 passes state changes to the triggers only once the loop runs).
         """
+        await self.settle()
         for _ in range(MAX_STEPS):
             due = self._next_due()
             if due is None or due >= target:
@@ -337,10 +340,6 @@ class Home:
         if not whens:
             return None
         seconds = max(min(whens) - loop.time() + TOGETHER, MIN_STEP)
-        import time as _t
-
-        soon = sorted((h for h in handles if not h.cancelled()), key=lambda h: h.when())[:3]
-        print("DUE", loop.time(), _t.monotonic(), _t.time(), [(h.when(), repr(h)[:150]) for h in soon])
         return dt_util.utcnow() + timedelta(seconds=seconds)
 
     async def settle(self, step: float = 1.0) -> None:
