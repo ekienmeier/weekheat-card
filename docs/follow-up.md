@@ -1,8 +1,9 @@
-# Follow-up after 0.13.0
+# Follow-up after 0.14.0
 
 Written 2026-11-18, at the end of the session that wrote the coding guidelines, reviewed the code,
-released 0.12.1 (fixes H1–H4) and 0.13.0 (the refactoring). This file is the plan for the points that
-are still open, and what a new session needs to know to continue. Read it together with:
+released 0.12.1 (fixes H1–H4) and 0.13.0 (the refactoring); updated 2026-11-19 after 0.14.0, which
+closed the remaining points (L5, L7, L8, L9, L12, L16, M16, M17, M18). This file is the plan for the
+points that are still open, and what a new session needs to know to continue. Read it together with:
 
 - [coding-guidelines.md](coding-guidelines.md): the rules for all code (CLAUDE.md has the summary).
 - [review-2026-11-18.md](review-2026-11-18.md): the findings; its *Status* section says which are fixed.
@@ -12,20 +13,18 @@ When a point here is done, update its line in the review's status table and remo
 
 ## Where things stand
 
-- `main` is release **v0.13.0** (on GitHub and in HACS). CI passes on it: format, lint, types, 80
-  tests, the build check, yamllint, ruff and HACS's validation. Since then CI also runs the
-  blueprint tests (`tests/blueprints/`) in a Home Assistant core. The branch `refactor` is merged and
-  can be deleted.
-- The owner updates their Home Assistant themselves. On 2026-11-18 it still ran the 0.12 card and
-  the 0.12.0 blueprints. Before any check against it, see what it runs: the card logs its version in
-  the browser console ("WEEKHEAT 0.13.0"); `python3 tools/ha.py ws '{"type": "blueprint/list",
-  "domain": "automation"}'` shows the blueprints' descriptions, which end with their release.
-- After 0.13.0 (not released yet): L8 and M17 changed the blueprints. The room blueprint stores a
-  fingerprint of its thermostats with saved setpoints (`_th`) and calls the new script blueprint
-  `blueprints/script/weekheat_exercise.yaml` for the valve exercise. The release that contains them
-  sets `BLUEPRINT_VERSION` and the marks of all three; its notes must say that the blueprints change
-  and that *Update now* also imports the exercise blueprint and creates `script.weekheat_exercise`
-  (without it, a room skips the exercise and raises a notification).
+- `main` is release **v0.14.0** (on GitHub; installed through HACS as a custom repository). CI runs
+  format, lint, types, the Node tests, the build check, yamllint, ruff, HACS's validation and the
+  blueprint tests (`tests/blueprints/`) in a Home Assistant core (2025.7 and 2026.10).
+- 0.14.0 changed the blueprints: the room blueprint stores a fingerprint of its thermostats with saved
+  setpoints (`_th`), calls the new script blueprint `blueprints/script/weekheat_exercise.yaml` for
+  the valve exercise, calls the day script only when it exists, and all three need HA 2025.7
+  (`min_version`). *Update now* on the card imports the exercise blueprint and creates
+  `script.weekheat_exercise`.
+- The owner updates their Home Assistant themselves. Before any check against it, see what it runs:
+  the card logs its version in the browser console ("WEEKHEAT 0.14.0"); `python3 tools/ha.py ws
+  '{"type": "blueprint/list", "domain": "automation"}'` shows the blueprints' descriptions, which end
+  with their release.
 
 ## How to work on this project
 
@@ -52,7 +51,7 @@ helpers, automations or blueprints without asking.
   card file in place of the installed one; `fake:<entity>=<setpoint>` shows a setpoint without
   writing it. Environment: `HA_URL=$(cat ~/.config/weekheat/url) HA_TOKEN=$(cat ~/.config/weekheat/token)`.
 - `tools/compare_shots.mjs`: compares two screenshot folders (pixel counts and red diff pictures).
-  To check a card change: `git show v0.13.0:dist/weekheat-card.js > old.js`, take the same steps
+  To check a card change: `git show v0.14.0:dist/weekheat-card.js > old.js`, take the same steps
   with `CARD=old.js` and with `CARD=dist/weekheat-card.js` (one after the other: the "now" line of
   the chart moves with time), then compare. Selectors of the card: `.room-head`, `.tabs button`,
   `.day-chip`, `.icon-button` (settings), `.foot .link` (layout), `.period-row`, `.settings-head`.
@@ -102,11 +101,13 @@ use `:where(…)` for them. `continue_on_error` covers only Home Assistant error
 configuration errors. The `has_value` filter works in templates. `ha.rest` returns parsed JSON, so
 a template answer like `255` comes back as a number.
 
-## Open points, in a sensible order
+## Open points
 
-Each says what is wrong, where, a way to fix it, how to check it, and what it means for the version.
+None from the review. Known and left as they are: the midnight double write (design.md *Testing*),
+and that the blueprint tests do not cover an HA restart, the late notification and the state size
+guard.
 
-### 9. Not planned: the default HACS store
+### Not planned: the default HACS store
 
 The owner decided on 2026-11-18 not to publish Weekheat in the default HACS store: it would not make
 their own updates easier (a custom repository gets the same update entity), and blueprints are not

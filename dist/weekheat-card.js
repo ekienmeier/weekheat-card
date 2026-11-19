@@ -1,4 +1,4 @@
-// node_modules/@lit/reactive-element/css-tag.js
+// ../../../node_modules/@lit/reactive-element/css-tag.js
 var t = globalThis;
 var e = t.ShadowRoot && (void 0 === t.ShadyCSS || t.ShadyCSS.nativeShadow) && "adoptedStyleSheets" in Document.prototype && "replace" in CSSStyleSheet.prototype;
 var s = Symbol();
@@ -43,7 +43,7 @@ var c = e ? (t5) => t5 : (t5) => t5 instanceof CSSStyleSheet ? ((t6) => {
   return r(e5);
 })(t5) : t5;
 
-// node_modules/@lit/reactive-element/reactive-element.js
+// ../../../node_modules/@lit/reactive-element/reactive-element.js
 var { is: i2, defineProperty: e2, getOwnPropertyDescriptor: h, getOwnPropertyNames: r2, getOwnPropertySymbols: o2, getPrototypeOf: n2 } = Object;
 var a = globalThis;
 var c2 = a.trustedTypes;
@@ -265,7 +265,7 @@ var y = class extends HTMLElement {
 };
 y.elementStyles = [], y.shadowRootOptions = { mode: "open" }, y[d("elementProperties")] = /* @__PURE__ */ new Map(), y[d("finalized")] = /* @__PURE__ */ new Map(), p?.({ ReactiveElement: y }), (a.reactiveElementVersions ??= []).push("2.1.2");
 
-// node_modules/lit-html/lit-html.js
+// ../../../node_modules/lit-html/lit-html.js
 var t2 = globalThis;
 var i3 = (t5) => t5;
 var s2 = t2.trustedTypes;
@@ -520,7 +520,7 @@ var D = (t5, i6, s5) => {
   return h4._$AI(t5), h4;
 };
 
-// node_modules/lit-element/lit-element.js
+// ../../../node_modules/lit-element/lit-element.js
 var s3 = globalThis;
 var i4 = class extends y {
   constructor() {
@@ -580,6 +580,10 @@ var STATE_MAX = 255;
 var WINDOW_CLASSES = ["window", "door", "opening", "garage_door"];
 var ROOM_BLUEPRINT = "weekheat_room.yaml";
 var DAY_BLUEPRINT = "weekheat_day.yaml";
+var EXERCISE_BLUEPRINT = "weekheat_exercise.yaml";
+var EXERCISE_SCRIPT = "script.weekheat_exercise";
+var EXERCISE_ALIAS = "Weekheat valve exercise";
+var BLUEPRINT_FOLDER = "ekienmeier";
 var BLUEPRINT_REPO = "https://github.com/ekienmeier/weekheat-card/blob/";
 var DIRECTORY_KEY = "weekheat";
 var UNAVAILABLE = ["unavailable", "unknown"];
@@ -701,7 +705,8 @@ function directoryEntry(room) {
 function stateSize(thermostats) {
   const widest = 22.5;
   const state = Object.fromEntries(thermostats.map((entity) => [entity, [widest]]));
-  const markers = { _open: thermostats.map(() => widest), _rc: 1, _rt: 99999999, _ex: 1 };
+  const saved = { _open: thermostats.map(() => widest), _th: 999999 };
+  const markers = { ...saved, _rc: 1, _rt: 99999999, _ex: 1 };
   return JSON.stringify({ ...state, ...markers }).length;
 }
 function checkStateSize(thermostats) {
@@ -889,11 +894,13 @@ function closeEditors(ui) {
   ui.period = null;
   ui.addPlan = null;
   ui.renaming = null;
+  ui.confirming = null;
 }
 function showView(ctx, view) {
   ctx.store.update(({ ui }) => {
     ui.view = ui.view === view ? "rooms" : view;
     ui.dayEdit = null;
+    ui.confirming = null;
   });
 }
 function toggleRoom(ctx, room) {
@@ -922,6 +929,7 @@ function toggleSettingsPart(ctx, part) {
     ui.settingsPart = ui.settingsPart === part ? null : part;
     ui.addRoom = ui.settingsPart === "add" ? { name: "", thermostats: [] } : null;
     ui.picker = null;
+    ui.confirming = null;
   });
 }
 function toggleSetupPart(ctx, part) {
@@ -974,15 +982,29 @@ function olderVersion(a3, b3) {
 }
 
 // src/version.js
-var VERSION = "0.13.0";
-var BLUEPRINT_VERSION = "0.13.0";
+var VERSION = "0.14.0";
+var BLUEPRINT_VERSION = "0.14.0";
 
 // src/ha/blueprints.js
-function outdated(domain, list, file) {
+function installedBlueprint(list, file) {
   const path = Object.keys(list).find((key) => key.endsWith(file));
+  return { path, installed: path ? blueprintVersion(list[path]?.metadata?.description) : null };
+}
+function outdated(domain, list, file) {
+  const { path, installed } = installedBlueprint(list, file);
   if (!path) return [];
-  const installed = blueprintVersion(list[path]?.metadata?.description);
   return olderVersion(installed, BLUEPRINT_VERSION) ? [{ domain, path, file, installed }] : [];
+}
+function exerciseNeeds(list, states) {
+  const { path, installed } = installedBlueprint(list, EXERCISE_BLUEPRINT);
+  const current = Boolean(path) && !olderVersion(installed, BLUEPRINT_VERSION);
+  if (current && states[EXERCISE_SCRIPT]) return [];
+  const where = path || `${BLUEPRINT_FOLDER}/${EXERCISE_BLUEPRINT}`;
+  const need = { domain: (
+    /** @type {const} */
+    "script"
+  ), path: where, installed, current };
+  return [{ ...need, file: EXERCISE_BLUEPRINT, script: EXERCISE_SCRIPT }];
 }
 async function blueprintStatus(gateway) {
   const [automations, scripts] = await Promise.all([
@@ -991,7 +1013,8 @@ async function blueprintStatus(gateway) {
   ]);
   const old = [
     ...outdated("automation", automations, ROOM_BLUEPRINT),
-    ...outdated("script", scripts, DAY_BLUEPRINT)
+    ...outdated("script", scripts, DAY_BLUEPRINT),
+    ...exerciseNeeds(scripts, gateway.states)
   ];
   return { automations, old };
 }
@@ -1007,10 +1030,17 @@ async function replaceBlueprint(gateway, blueprint) {
     source_url: `${BLUEPRINT_REPO}main/${file}`
   });
 }
+async function createScript(gateway, blueprint) {
+  if (!blueprint.script || gateway.states[blueprint.script]) return;
+  const id = blueprint.script.replace(/^script\./, "");
+  const use = { path: blueprint.path, input: {} };
+  await gateway.saveConfig(`script/config/${id}`, { alias: EXERCISE_ALIAS, use_blueprint: use });
+}
 async function updateBlueprints(gateway, old) {
-  for (const blueprint of old) await replaceBlueprint(gateway, blueprint);
+  for (const blueprint of old) if (!blueprint.current) await replaceBlueprint(gateway, blueprint);
   await gateway.service("automation", "reload");
   await gateway.service("script", "reload");
+  for (const blueprint of old) await createScript(gateway, blueprint);
 }
 
 // src/domain/exceptions.js
@@ -1184,8 +1214,36 @@ function periodAt(periods, minute) {
 }
 
 // src/domain/plans.js
+var TRANSLITERATION = {
+  \u00DF: "ss",
+  "\u1E9E": "ss",
+  \u00E6: "ae",
+  \u00C6: "ae",
+  \u0153: "oe",
+  \u0152: "oe",
+  \u00F8: "o",
+  \u00D8: "o",
+  \u0142: "l",
+  \u0141: "l",
+  \u0111: "d",
+  \u0110: "d",
+  \u00F0: "d",
+  \u00D0: "d",
+  \u00FE: "th",
+  \u00DE: "th",
+  \u0127: "h",
+  \u0126: "h",
+  \u0167: "t",
+  \u0166: "t",
+  \u014B: "ng",
+  \u014A: "ng",
+  \u0131: "i",
+  \u0138: "k"
+};
+var TRANSLITERATED = new RegExp(`[${Object.keys(TRANSLITERATION).join("")}]`, "g");
+var ACCENTS = /[\u0300-\u036f]/g;
 function slugify(text) {
-  return String(text).replace(/ß/g, "ss").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return String(text).replace(TRANSLITERATED, (letter) => TRANSLITERATION[letter]).normalize("NFKD").replace(ACCENTS, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 function planLabel(friendly, room) {
   const name = String(friendly || "");
@@ -1239,7 +1297,11 @@ async function waitForReload(gateway, entity, { timeoutMs = 5e3 } = {}) {
 
 // src/ha/plans.js
 function planOf(item) {
-  return { item, periods: blocksToPeriods(item.monday) };
+  const periodsOf = (day, i6) => [day, blocksToPeriods(item[SCHEDULE_DAYS[i6]])];
+  const days = Object.fromEntries(WEEK.map(periodsOf));
+  const monday = JSON.stringify(days.mon);
+  const perDay = WEEK.some((day) => JSON.stringify(days[day]) !== monday);
+  return { item, periods: days.mon, days, perDay };
 }
 function everyDay(periods) {
   const blocks = periodsToBlocks(periods);
@@ -1403,9 +1465,12 @@ function storedState(states, entity) {
     return {};
   }
 }
+function periodsOn(plan2, weekday) {
+  return plan2?.days?.[weekday] || plan2?.periods || [];
+}
 function planNow(room, input) {
   const plan2 = planForDay(room, input.today, input.friendly);
-  const periods = input.plans[plan2]?.periods || [];
+  const periods = periodsOn(input.plans[plan2], input.today.weekday);
   const at2 = periods.length ? periodAt(periods, input.minute) : null;
   const wanted = at2 && at2.period.temperature != null ? periodTemp(at2.period) : null;
   return { plan: plan2, periods, at: at2, wanted };
@@ -1557,6 +1622,36 @@ function sliderPercent(value, { low, high }) {
   return clamp((value - low) / (high - low) * 100, 0, 100).toFixed(2);
 }
 
+// src/domain/formatting.js
+var NUMBER_LOCALES = {
+  comma_decimal: ["en-US", "en"],
+  decimal_comma: ["de", "es", "it"],
+  space_comma: ["fr", "sv", "cs"],
+  quote_decimal: ["de-CH"],
+  none: ["en-US"]
+};
+var clocks = /* @__PURE__ */ new Map();
+function localeHour12(locale) {
+  const key = locale || "";
+  if (!clocks.has(key)) {
+    const cycle = new Intl.DateTimeFormat(locale, { hour: "numeric" }).resolvedOptions().hourCycle;
+    clocks.set(key, cycle === "h11" || cycle === "h12");
+  }
+  return clocks.get(key);
+}
+function isHour12(timeFormat, language) {
+  if (timeFormat === "12") return true;
+  if (timeFormat === "24") return false;
+  return localeHour12(timeFormat === "system" ? void 0 : language);
+}
+function formattingOf(locale, fallback) {
+  const language = locale?.language || fallback;
+  const format = locale?.number_format;
+  const numbers = format === "system" ? void 0 : NUMBER_LOCALES[format] || [language];
+  const hour12 = isHour12(locale?.time_format, language);
+  return { numbers, grouping: format !== "none", hour12, language };
+}
+
 // src/i18n/de.js
 var de_default = {
   working_day: "Werktag",
@@ -1630,7 +1725,6 @@ var de_default = {
   no_script: "Das Skript \u201EWeekheat day\u201C fehlt.",
   unavailable: "nicht erreichbar",
   err_plan_in_use: "Dieser Plan wird in der Woche verwendet und kann nicht gel\xF6scht werden.",
-  confirm_delete_plan: "Plan l\xF6schen?",
   saved: "Gespeichert",
   error: "Fehler",
   new_room_paused: "Neue R\xE4ume starten pausiert: Pl\xE4ne pr\xFCfen, dann aktivieren.",
@@ -1676,7 +1770,6 @@ var de_default = {
   exercise_now: "Jetzt ausf\xFChren",
   exercise_started: "Ventilpflege l\xE4uft",
   exercise_help: "Alle Thermostate auf 30 \xB0C, warten, auf 5 \xB0C, warten, das Ganze zweimal; danach wieder der Wert von vorher (oder der Plan, falls inzwischen eine neue Periode begann). Dauert etwa viermal die Wartezeit. Pausierte R\xE4ume werden ausgelassen.",
-  confirm_exercise: "Ventilpflege jetzt in allen aktiven R\xE4umen ausf\xFChren?",
   window_help: "Ist einer davon so lange offen, werden die Thermostate auf 5 \xB0C gestellt; sind alle wieder zu, gilt wieder der Wert von vorher (oder der Plan, falls inzwischen eine neue Periode begann).",
   room_sensor: "Raumsensor",
   room_margin: "Spielraum",
@@ -1710,6 +1803,7 @@ var de_default = {
   rs_workaround: "Nur n\xF6tig f\xFCr Thermostate, die einen verkn\xFCpften Sensor nicht beachten oder \xFCberschwingen, z. B. Aqara W600. Thermostate, die gut regeln, brauchen das nicht.",
   bp_old: "Die Weekheat-Blueprints sind \xE4lter als die Karte ({installed} \u2192 {needed}).",
   bp_none: "ohne Version",
+  bp_no_exercise: "Das Skript f\xFCr die Ventilpflege fehlt.",
   bp_update: "Jetzt aktualisieren",
   err_room_name: "Der Name braucht mindestens einen Buchstaben oder eine Ziffer.",
   err_room_exists: "Ein Raum mit diesem Namen existiert schon (Automation {id}).",
@@ -1717,7 +1811,11 @@ var de_default = {
   err_state_size: "Zu viele Thermostate f\xFCr einen Raum: Ihr Zustand br\xE4uchte bis zu {size} Zeichen, ein Zustands-Helfer fasst {max}. Weniger Thermostate w\xE4hlen oder ihnen k\xFCrzere Entity-IDs geben.",
   room_help: "Ist der Raum um den Spielraum w\xE4rmer als die Solltemperatur, werden die Thermostate auf 5 \xB0C gestellt; ist er wieder auf die Solltemperatur abgek\xFChlt, bekommen sie sie zur\xFCck. F\xFCr Thermostate, die \xFCberschwingen oder einen verkn\xFCpften Sensor nicht beachten.",
   err_no_exceptions: "Kein Kalender f\xFCr Ausnahmen eingestellt.",
-  err_no_switch: "Dieser Raum hat keinen Heizungsschalter; ein Administrator kann ihn anlegen."
+  err_no_switch: "Dieser Raum hat keinen Heizungsschalter; ein Administrator kann ihn anlegen.",
+  // Two-step buttons (state/actions/confirm.js) and plans that differ by weekday.
+  really_delete: "Wirklich l\xF6schen?",
+  really_exercise: "Wirklich in allen aktiven R\xE4umen ausf\xFChren?",
+  plan_per_day: "In Home Assistant ist dieser Plan je Wochentag anders. Hier steht der Montag; wird er hier gespeichert, gilt er f\xFCr jeden Tag."
 };
 
 // src/i18n/en.js
@@ -1793,7 +1891,6 @@ var en_default = {
   no_script: 'The "Weekheat day" script is missing.',
   unavailable: "unavailable",
   err_plan_in_use: "This plan is used in the week and cannot be deleted.",
-  confirm_delete_plan: "Delete plan?",
   saved: "Saved",
   error: "Error",
   new_room_paused: "New rooms start paused: check the plans, then activate.",
@@ -1839,7 +1936,6 @@ var en_default = {
   exercise_now: "Run now",
   exercise_started: "Valve exercise running",
   exercise_help: "All thermostats to 30 \xB0C, wait, to 5 \xB0C, wait, twice; then the value from before again (or the plan, if a new period began in between). Takes about four times the wait. Paused rooms are left out.",
-  confirm_exercise: "Run the valve exercise now in all active rooms?",
   window_help: "When one of them has been open this long, the thermostats are set to 5 \xB0C; when all are closed again, the value from before applies again (or the plan, if a new period began in between).",
   room_sensor: "Room sensor",
   room_margin: "Margin",
@@ -1873,6 +1969,7 @@ var en_default = {
   rs_workaround: "Only needed for thermostats that ignore a linked sensor or overshoot, e.g. the Aqara W600. Thermostats that control well do not need it.",
   bp_old: "The Weekheat blueprints are older than the card ({installed} \u2192 {needed}).",
   bp_none: "no version",
+  bp_no_exercise: "The script for the valve exercise is missing.",
   bp_update: "Update now",
   err_room_name: "The name needs at least one letter or digit.",
   err_room_exists: "A room with this name exists already (automation {id}).",
@@ -1880,7 +1977,11 @@ var en_default = {
   err_state_size: "Too many thermostats for one room: their state would need up to {size} characters, and a state helper holds {max}. Pick fewer thermostats, or give them shorter entity ids.",
   room_help: "When the room is the margin above the setpoint, the thermostats are set to 5 \xB0C; once it has cooled down to the setpoint, they get it back. For thermostats that overshoot or ignore a linked sensor.",
   err_no_exceptions: "No exceptions calendar is set.",
-  err_no_switch: "This room has no heating switch; an administrator can add one."
+  err_no_switch: "This room has no heating switch; an administrator can add one.",
+  // Two-step buttons (state/actions/confirm.js) and plans that differ by weekday.
+  really_delete: "Really delete?",
+  really_exercise: "Really run in all active rooms?",
+  plan_per_day: "In Home Assistant this plan differs by weekday. Shown here is Monday; saving it here makes every day like it."
 };
 
 // src/i18n/text.js
@@ -1899,6 +2000,10 @@ function fill(text, values) {
 // src/state/selectors.js
 function lang(ctx) {
   return languageOf(ctx.gateway.hass);
+}
+function formatting(ctx) {
+  const { hass } = ctx.gateway;
+  return formattingOf(hass.locale, hass.language || "en");
 }
 function texts(ctx) {
   return textsFor(lang(ctx));
@@ -2010,7 +2115,8 @@ var FIRST_UI = {
   thermostat: {},
   dayEdit: null,
   layout: "dial",
-  message: null
+  message: null,
+  confirming: null
 };
 var NOTHING_EDITED = {
   drafts: { plans: {}, weeks: {}, setups: {}, settings: null, exercise: null },
@@ -2088,6 +2194,7 @@ var base = i`
   .btn[disabled] { opacity: 0.5; cursor: default; }
   .link { border: 0; background: none; color: var(--primary-color); cursor: pointer;
     white-space: nowrap; }
+  .btn.flat.asking, .link.asking { color: var(--wh-bad); font-weight: 500; }
   .icon { border: 0; background: none; color: var(--secondary-text-color); cursor: pointer;
     min-width: 32px; min-height: 32px; }
   .icon[disabled] { opacity: 0.35; cursor: default; }
@@ -2330,15 +2437,18 @@ var rooms = i`
     text-overflow: ellipsis; }
   .room-temp { font-size: 1.9em; font-weight: 300; text-align: right; }
   .chevron { color: var(--secondary-text-color); flex: none; }
-  .room-bar { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; }
+  /* On a narrow card the heating switch goes to its own line, and the tabs scroll if needed. */
+  .room-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 4px; }
   .tabs { display: inline-flex; background: var(--secondary-background-color); border-radius: 18px;
-    padding: 3px; }
-  .tabs button { border: 0; background: none; color: var(--secondary-text-color); font-size: 0.92em;
-    padding: 5px 12px; border-radius: 15px; cursor: pointer; }
+    padding: 3px; max-width: 100%; box-sizing: border-box; overflow-x: auto;
+    scrollbar-width: none; }
+  .tabs button { flex: none; white-space: nowrap; border: 0; background: none;
+    color: var(--secondary-text-color); font-size: 0.92em; padding: 5px 12px; border-radius: 15px;
+    cursor: pointer; }
   .tabs button.on { background: var(--card-background-color); color: var(--primary-text-color);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
   .switch { display: inline-flex; align-items: center; gap: 8px; font-size: 0.9em;
-    color: var(--secondary-text-color); }
+    margin-left: auto; color: var(--secondary-text-color); }
   .toggle { width: 40px; height: 22px; border-radius: 11px; border: 0; position: relative;
     background: var(--disabled-color, #bdbdbd); cursor: pointer; padding: 0; }
   .toggle i { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
@@ -2501,13 +2611,18 @@ function problems(ctx) {
   const noScript = data.rooms && data.admin && !data.script;
   return b2`${error}${noScript ? b2`<div class="banner bad">${text.no_script}</div>` : A}`;
 }
-function oldBlueprints(ctx) {
-  const [first] = ctx.store.data.oldBlueprints;
-  if (!ctx.store.data.admin || !first) return A;
+function blueprintWords(ctx) {
   const text = texts(ctx);
-  const versions = { installed: first.installed || text.bp_none, needed: BLUEPRINT_VERSION };
+  const older = ctx.store.data.oldBlueprints.find((blueprint) => !blueprint.current);
+  if (!older) return text.bp_no_exercise;
+  const versions = { installed: older.installed || text.bp_none, needed: BLUEPRINT_VERSION };
+  return fill(text.bp_old, versions);
+}
+function oldBlueprints(ctx) {
+  if (!ctx.store.data.admin || !ctx.store.data.oldBlueprints.length) return A;
+  const text = texts(ctx);
   return b2`<div class="banner warn">
-    <span>${fill(text.bp_old, versions)}</span>
+    <span>${blueprintWords(ctx)}</span>
     <button class="btn small" @click=${() => updateOldBlueprints(ctx)}>${text.bp_update}</button>
   </div>`;
 }
@@ -2527,27 +2642,40 @@ function banners(ctx) {
 // src/domain/format.js
 var COLD = 14;
 var WARM = 24;
-function numberLocale(lang2) {
+var clockFormats = /* @__PURE__ */ new Map();
+function dateLocale(lang2) {
   return lang2 === "de" ? "de-AT" : "en-GB";
 }
-function formatNumber(value, lang2, { min = 0, max = 1 } = {}) {
-  const options2 = { minimumFractionDigits: min, maximumFractionDigits: max };
-  return Number(value).toLocaleString(numberLocale(lang2), options2);
+function formatNumber(value, format, { min = 0, max = 1 } = {}) {
+  const digits = { minimumFractionDigits: min, maximumFractionDigits: max };
+  const options2 = { ...digits, useGrouping: format.grouping };
+  return Number(value).toLocaleString(format.numbers, options2);
 }
-function formatTemp(value, lang2) {
-  return value == null ? "\u2013" : `${formatNumber(value, lang2)} \xB0C`;
+function formatTemp(value, format) {
+  return value == null ? "\u2013" : `${formatNumber(value, format)} \xB0C`;
 }
-function formatPeriod(period, lang2, text) {
+function clockFormat(locale) {
+  if (!clockFormats.has(locale)) {
+    const options2 = { hour: "numeric", minute: "2-digit", hourCycle: "h12", timeZone: "UTC" };
+    clockFormats.set(locale, new Intl.DateTimeFormat(locale, options2));
+  }
+  return clockFormats.get(locale);
+}
+function formatTime(minutes, format) {
+  if (!format.hour12) return fromMin(minutes);
+  return clockFormat(format.language).format(Date.UTC(2e3, 0, 1, 0, minutes));
+}
+function formatPeriod(period, format, text) {
   if (!period) return "\u2013";
   if (period.off) return text.off;
-  return formatTemp(periodTemp(period), lang2);
+  return formatTemp(periodTemp(period), format);
 }
-function targetsText(targets2, lang2) {
+function targetsText(targets2, format) {
   const values = targets2.filter((value) => typeof value === "number");
   if (!values.length) return "\u2013";
   if (values.every((value) => Math.abs(value - values[0]) < SAME_SHOWN))
-    return formatTemp(values[0], lang2);
-  return `${values.map((value) => formatNumber(value, lang2)).join(" / ")} \xB0C`;
+    return formatTemp(values[0], format);
+  return `${values.map((value) => formatNumber(value, format)).join(" / ")} \xB0C`;
 }
 function count(amount, [one, many]) {
   return `${amount} ${amount === 1 ? one : many}`;
@@ -2686,7 +2814,7 @@ function dayName(ctx, day) {
   const text = texts(ctx);
   const today2 = now(ctx).date;
   const names = { [today2]: text.today, [addDays(today2, 1)]: text.tomorrow };
-  const format = new Intl.DateTimeFormat(numberLocale(lang(ctx)), {
+  const format = new Intl.DateTimeFormat(dateLocale(lang(ctx)), {
     day: "numeric",
     month: "numeric"
   });
@@ -2868,22 +2996,23 @@ function lookOf(status) {
   return look;
 }
 function untilText(ctx, status) {
-  return status.at?.next ? ` ${texts(ctx).until} ${fromMin(status.at.next.start)}` : "";
+  const next = status.at?.next;
+  return next ? ` ${texts(ctx).until} ${formatTime(next.start, formatting(ctx))}` : "";
 }
 function targets(ctx, room, status) {
-  if (room.thermostats.length < 2) return formatTemp(status.target, lang(ctx));
+  if (room.thermostats.length < 2) return formatTemp(status.target, formatting(ctx));
   const each = room.thermostats.map(
     (th) => thermostatStatus(room, th, { status, states: ctx.gateway.states })
   );
   return targetsText(
     each.map((item) => item.target),
-    lang(ctx)
+    formatting(ctx)
   );
 }
 function statusLine(ctx, room, status) {
   const text = texts(ctx);
   const mode = roomMode(status);
-  const temp = (value) => formatTemp(value, lang(ctx));
+  const temp = (value) => formatTemp(value, formatting(ctx));
   const set = () => `${targets(ctx, room, status)}${untilText(ctx, status)}`;
   const lines = {
     paused: () => status.target != null ? `${text.paused} \xB7 ${temp(status.target)}` : text.paused,
@@ -2899,7 +3028,7 @@ function scheduledLine(ctx, status) {
   if (!status.at) return "\u2013";
   const text = texts(ctx);
   const until = untilText(ctx, status) || ` ${text.until} ${text.tomorrow_l}`;
-  return `${formatPeriod(status.at.period, lang(ctx), text)}${until}`;
+  return `${formatPeriod(status.at.period, formatting(ctx), text)}${until}`;
 }
 function controlWord(ctx, status, { named }) {
   const look = lookOf(status);
@@ -2996,7 +3125,7 @@ function handle(ctx, value) {
 function planDot(ctx, status) {
   if (!canReturnToPlan(status) || status.wanted == null) return A;
   const [x2, y3] = at(angleOf(ctx, status.wanted), DIAL.radius - 17);
-  const title = `${texts(ctx).plan} ${formatTemp(status.wanted, lang(ctx))}`;
+  const title = `${texts(ctx).plan} ${formatTemp(status.wanted, formatting(ctx))}`;
   return w`<circle cx=${x2} cy=${y3} r="3" class="dial-plan"><title>${title}</title></circle>`;
 }
 function roomTick(ctx, status) {
@@ -3007,7 +3136,7 @@ function roomTick(ctx, status) {
 }
 function smallLines(ctx, status) {
   const text = texts(ctx);
-  const temp = (value) => formatTemp(value, lang(ctx));
+  const temp = (value) => formatTemp(value, formatting(ctx));
   const room = status.current != null ? `${text.current} ${temp(Math.round(status.current * 10) / 10)}` : "";
   const differs = canReturnToPlan(status) && status.wanted != null;
   return { room, plan: differs ? `${text.plan} ${temp(status.wanted)}` : "" };
@@ -3029,12 +3158,12 @@ function bigValue(ctx, { value, mixed: mixed2 }) {
   if (value <= OFF_T)
     return w`<text x="100" y="112" class="dial-value off">${texts(ctx).off}</text>`;
   const unit = w`<tspan class="dial-unit" dy="-17">°C</tspan>`;
-  const number = formatNumber(value, lang(ctx));
+  const number = formatNumber(value, formatting(ctx));
   return w`<text x="100" y="116" class="dial-value">${number}${unit}</text>`;
 }
 function valueText(ctx, { value, mixed: mixed2 }) {
   if (value == null) return mixed2 || "\u2013";
-  return value <= OFF_T ? texts(ctx).off : formatTemp(value, lang(ctx));
+  return value <= OFF_T ? texts(ctx).off : formatTemp(value, formatting(ctx));
 }
 function dialSvg(ctx, room, shown) {
   const on = dialHandlers(ctx, room, shown.th);
@@ -3088,7 +3217,7 @@ function sliderBar(ctx, { status, value }) {
 function sliderView(ctx, room, shown) {
   const on = sliderHandlers(ctx, room, shown.th);
   const { low, high } = scale(ctx);
-  const end = (value) => b2`<span>${formatTemp(value, lang(ctx))}</span>`;
+  const end = (value) => b2`<span>${formatTemp(value, formatting(ctx))}</span>`;
   const label = shown.status.label || texts(ctx).setpoint;
   return b2`<div class="slider ${shown.framed ? "framed" : ""}" tabindex="0" role="slider"
     aria-label=${label} aria-valuemin=${low} aria-valuemax=${high}
@@ -3118,7 +3247,8 @@ function choiceValue(ctx, room, of) {
   const value = shownValue(ctx, room, of.th);
   if (typeof value !== "number") return A;
   const manual = statusOfThermostat(ctx, room, of).manual;
-  return b2`<span class=${manual ? "manual" : "dim"}>${formatNumber(value, lang(ctx))}°</span>`;
+  const number = formatNumber(value, formatting(ctx));
+  return b2`<span class=${manual ? "manual" : "dim"}>${number}°</span>`;
 }
 function dialLayout(ctx, room, status) {
   const several = room.thermostats.length > 1;
@@ -3130,7 +3260,7 @@ function dialLayout(ctx, room, status) {
   const shown = {
     status: selected ? statusOfThermostat(ctx, room, { status, th: selected }) : status,
     value: values ? null : shownValue(ctx, room, selected),
-    mixed: values ? targetsText(values, lang(ctx)) : void 0
+    mixed: values ? targetsText(values, formatting(ctx)) : void 0
   };
   const choices = several ? selector(ctx, room, { status, selected }) : A;
   return b2`${choices}${dialView(ctx, room, { ...shown, th: selected })}`;
@@ -3164,8 +3294,8 @@ function periodPill(ctx, room, status) {
   if (!status.at) return A;
   const text = texts(ctx);
   const { period, next } = status.at;
-  const show = (item) => formatPeriod(item, lang(ctx), text);
-  const until = next ? `${text.until} ${fromMin(next.start)}` : `${text.until} ${text.tomorrow_l}`;
+  const show = (item) => formatPeriod(item, formatting(ctx), text);
+  const until = next ? `${text.until} ${formatTime(next.start, formatting(ctx))}` : `${text.until} ${text.tomorrow_l}`;
   const now2 = `${planName(ctx, room, status.plan)}: ${show(period)} ${until}`;
   const then = next ? b2`<span class="dim">${text.then} ${show(next)}</span>` : A;
   return b2`<div class="pill"><span>${now2}</span>${then}</div>`;
@@ -3177,7 +3307,7 @@ function thermostatList(ctx, room, status) {
     const each = statusOfThermostat(ctx, room, { status, th });
     const value = setpointText(ctx, state, each);
     const setpoint = b2`<span class=${each.manual ? "manual" : ""}>${value}</span>`;
-    const current = formatTemp(state.attributes.current_temperature, lang(ctx));
+    const current = formatTemp(state.attributes.current_temperature, formatting(ctx));
     return b2`<div class="thermostat"><span>${each.label}</span>
       <span class="dim">${current} → ${setpoint}</span></div>`;
   };
@@ -3186,13 +3316,13 @@ function thermostatList(ctx, room, status) {
 function setpointText(ctx, state, each) {
   const text = texts(ctx);
   if (UNAVAILABLE.includes(state.state)) return text.unavailable;
-  return state.state === "off" ? text.off : formatTemp(each.target, lang(ctx));
+  return state.state === "off" ? text.off : formatTemp(each.target, formatting(ctx));
 }
 function backRow(ctx, room, status) {
   if (!canReturnToPlan(status) || status.wanted == null) return A;
   const text = texts(ctx);
   const next = status.at?.next;
-  const holds2 = next ? `${text.manual_until} ${fromMin(next.start)}${text.manual_then}` : "";
+  const holds2 = next ? `${text.manual_until} ${formatTime(next.start, formatting(ctx))}${text.manual_then}` : "";
   return b2`<div class="back-row"><span class="dim small grow">${holds2}</span>
     <button class="btn flat small outline" @click=${() => backToPlan(ctx, room)}>
       ${text.to_plan}</button></div>`;
@@ -3400,6 +3530,24 @@ function addPlan(ctx, room) {
   });
 }
 
+// src/state/actions/confirm.js
+var CONFIRM_MS = 5e3;
+function confirmed(ctx, key, act) {
+  clearTimeout(ctx.timers.confirm);
+  if (ctx.store.ui.confirming === key) {
+    ctx.store.update(({ ui }) => ui.confirming = null);
+    return act();
+  }
+  ctx.store.update(({ ui }) => ui.confirming = key);
+  const stop = () => ctx.store.ui.confirming === key && cancelConfirm(ctx);
+  ctx.timers.confirm = setTimeout(stop, CONFIRM_MS);
+  return void 0;
+}
+function cancelConfirm(ctx) {
+  clearTimeout(ctx.timers.confirm);
+  ctx.store.update(({ ui }) => ui.confirming = null);
+}
+
 // src/ui/views/chart.js
 var RANGE = { low: 10, high: 26 };
 function barHeight(period) {
@@ -3410,7 +3558,7 @@ function barHeight(period) {
 }
 function bar(ctx, period, width) {
   const gap2 = period.temperature == null && !period.off;
-  const value = period.off ? texts(ctx).off : formatNumber(period.temperature, lang(ctx));
+  const value = period.off ? texts(ctx).off : formatNumber(period.temperature, formatting(ctx));
   const color = period.off || gap2 ? "" : `background:${tempColor(period.temperature)}`;
   const style = `height:${barHeight(period)}%;${color}`;
   return b2`<div class="chart-bar" style=${style}>${width > 6 && !gap2 ? value : ""}</div>`;
@@ -3424,7 +3572,8 @@ function segment(ctx, chart, index) {
   const style = `left:${period.start / DAY_MINUTES * 100}%;width:${width}%`;
   const inside = bar(ctx, period, width);
   if (!ctx.store.data.admin) return b2`<div class=${classes} style=${style}>${inside}</div>`;
-  const name = `${fromMin(period.start)} ${formatPeriod(period, lang(ctx), texts(ctx))}`;
+  const format = formatting(ctx);
+  const name = `${formatTime(period.start, format)} ${formatPeriod(period, format, texts(ctx))}`;
   return b2`<button class=${classes} style=${style} aria-label=${name}
     @click=${() => togglePeriod(ctx, chart.plan, index)}>${inside}</button>`;
 }
@@ -3439,8 +3588,9 @@ function chartView(ctx, chart) {
 function periodRow(ctx, list, index) {
   const period = list.periods[index];
   const now2 = list.current === period.start ? "current" : "";
-  const inside = b2`<span>${fromMin(period.start)}</span><span class="grow"></span>
-    <span>${formatPeriod(period, lang(ctx), texts(ctx))}</span>`;
+  const format = formatting(ctx);
+  const inside = b2`<span>${formatTime(period.start, format)}</span><span class="grow"></span>
+    <span>${formatPeriod(period, format, texts(ctx))}</span>`;
   if (!ctx.store.data.admin) return b2`<div class="period-row ${now2}">${inside}</div>`;
   return b2`<button class="period-row ${now2}" @click=${() => togglePeriod(ctx, list.plan, index)}>
     ${inside}</button>`;
@@ -3451,7 +3601,7 @@ function temperatureStepper(ctx, list, index) {
   const button2 = (steps, word) => b2`<button class="round small" ?disabled=${period.off}
     aria-label=${word} @click=${() => stepPeriod(ctx, list.plan, { index, steps })}>
     ${steps < 0 ? "\u2212" : "+"}</button>`;
-  const value = period.off ? text.off : formatPeriod(period, lang(ctx), text);
+  const value = period.off ? text.off : formatPeriod(period, formatting(ctx), text);
   return b2`<div class="temperature-step">
     ${button2(-1, text.colder)}<span>${value}</span>${button2(1, text.warmer)}</div>`;
 }
@@ -3538,13 +3688,19 @@ function usedOn(ctx, room, plan2) {
 function planActions(ctx, plan2) {
   const text = texts(ctx);
   const renaming = ctx.store.ui.renaming === plan2.entity;
-  const remove = () => confirm(text.confirm_delete_plan) && removePlan(ctx, plan2);
   const rename = button(text.rename, () => renamePlan(ctx, plan2), { kind: "link small" });
   return b2`<div class="actions">
       ${button(`+ ${text.add_period}`, () => addPeriod(ctx, plan2), { kind: "btn flat small" })}
-      <span class="grow"></span>${renaming ? A : rename}
-      ${button(text.delete, remove, { kind: "link small" })}</div>
+      <span class="grow"></span>${renaming ? A : rename}${deleteButton(ctx, plan2)}</div>
     ${renaming ? nameField(ctx, plan2) : A}${planSaveBar(ctx, plan2)}`;
+}
+function deleteButton(ctx, plan2) {
+  const text = texts(ctx);
+  const key = `delete:${plan2.entity}`;
+  const asking = ctx.store.ui.confirming === key;
+  const remove = () => confirmed(ctx, key, () => removePlan(ctx, plan2));
+  const label = asking ? text.really_delete : text.delete;
+  return button(label, remove, { kind: `link small ${asking ? "asking" : ""}` });
 }
 function nameField(ctx, plan2) {
   const name = planDraft(ctx, plan2.room, plan2.entity).name;
@@ -3565,14 +3721,22 @@ function planSaveBar(ctx, plan2) {
 }
 function planDetail(ctx, plan2, status) {
   const periods = planDraft(ctx, plan2.room, plan2.entity).periods;
-  const today2 = plan2.entity === status.plan;
+  const perDay = isPerDay(ctx, plan2);
+  const { minute, current } = markedNow(ctx, plan2, status);
   const edit = ctx.store.ui.period;
   const editing = edit?.room === plan2.room.id && edit.plan === plan2.entity ? edit.index : null;
-  const current = today2 && status.at ? status.at.period.start : null;
   return b2`<div class="pinfo dim small">${usedOn(ctx, plan2.room, plan2.entity)}</div>
-    ${chartView(ctx, { plan: plan2, periods, now: today2 ? now(ctx).min : null, selected: editing })}
+    ${perDay ? b2`<div class="banner warn small">${texts(ctx).plan_per_day}</div>` : A}
+    ${chartView(ctx, { plan: plan2, periods, now: minute, selected: editing })}
     ${periodList(ctx, { plan: plan2, periods, current, editing })}
     ${ctx.store.data.admin ? planActions(ctx, plan2) : A}`;
+}
+function isPerDay(ctx, plan2) {
+  return Boolean(ctx.store.data.plans[plan2.entity]?.perDay);
+}
+function markedNow(ctx, plan2, status) {
+  if (plan2.entity !== status.plan || isPerDay(ctx, plan2)) return { minute: null, current: null };
+  return { minute: now(ctx).min, current: status.at ? status.at.period.start : null };
 }
 function planView(ctx, room, status) {
   const shown = shownPlan(ctx, room, status);
@@ -3652,11 +3816,11 @@ function commitSetup(ctx, room) {
   });
 }
 
-// node_modules/lit-html/directive-helpers.js
+// ../../../node_modules/lit-html/directive-helpers.js
 var { I: t3 } = j;
 var r4 = (o7) => void 0 === o7.strings;
 
-// node_modules/lit-html/directive.js
+// ../../../node_modules/lit-html/directive.js
 var t4 = { ATTRIBUTE: 1, CHILD: 2, PROPERTY: 3, BOOLEAN_ATTRIBUTE: 4, EVENT: 5, ELEMENT: 6 };
 var e4 = (t5) => (...e5) => ({ _$litDirective$: t5, values: e5 });
 var i5 = class {
@@ -3676,7 +3840,7 @@ var i5 = class {
   }
 };
 
-// node_modules/lit-html/async-directive.js
+// ../../../node_modules/lit-html/async-directive.js
 var s4 = (i6, t5) => {
   const e5 = i6._$AN;
   if (void 0 === e5) return false;
@@ -3733,7 +3897,7 @@ var f3 = class extends i5 {
   }
 };
 
-// node_modules/lit-html/directives/ref.js
+// ../../../node_modules/lit-html/directives/ref.js
 var o6 = /* @__PURE__ */ new WeakMap();
 var n5 = e4(class extends f3 {
   render(i6) {
@@ -3792,7 +3956,7 @@ function focusOnce(field) {
 function temperatureOf(ctx, kind, state) {
   const value = kind === "rs" ? Number(state.state) : state.attributes.current_temperature;
   if (kind === "win" || typeof value !== "number" || Number.isNaN(value)) return A;
-  return b2` <span class="dim">· ${formatTemp(value, lang(ctx))}</span>`;
+  return b2` <span class="dim">· ${formatTemp(value, formatting(ctx))}</span>`;
 }
 function found(ctx, picker, state) {
   const id = state.entity_id;
@@ -3876,12 +4040,12 @@ function windowsBody(ctx, room) {
 function marginText(ctx, room) {
   const typed = String(setupDraft(ctx, room).room_margin).replace(",", ".");
   const margin = Number(typed) || LIMITS.room_margin.initial;
-  return `${formatNumber(margin, lang(ctx), { min: 1, max: 1 })} \xB0C`;
+  return `${formatNumber(margin, formatting(ctx), { min: 1, max: 1 })} \xB0C`;
 }
 function sensorEntry(ctx, room, sensor) {
   const name = nameOf(ctx, sensor);
   const value = Number(ctx.gateway.states[sensor]?.state);
-  const shown = formatTemp(value, lang(ctx));
+  const shown = formatTemp(value, formatting(ctx));
   const temperature = Number.isNaN(value) ? A : b2` <span class="dim">· ${shown}</span>`;
   const remove = () => unpick(ctx, room, { kind: "rs", entity: sensor });
   return b2`<div class="entry"><ha-icon icon="mdi:thermometer"></ha-icon>
@@ -4011,7 +4175,7 @@ function roomMain(ctx, room, status) {
 function roomHead(ctx, room, status) {
   const look = lookOf(status);
   const open = ctx.store.ui.openRoom === room.id;
-  const temperature = status.current != null ? `${formatNumber(status.current, lang(ctx))}\xB0` : "\u2013";
+  const temperature = status.current != null ? `${formatNumber(status.current, formatting(ctx))}\xB0` : "\u2013";
   const chevron = open ? "mdi:chevron-up" : "mdi:chevron-down";
   const toggle = () => toggleRoom(ctx, room.id);
   return b2`<button class="room-head" aria-expanded=${open} @click=${toggle}>
@@ -4061,7 +4225,7 @@ function roomView(ctx, room) {
   return b2`<div class="room open">
     ${head}
     <div class="room-bar">
-      ${tabs(ctx, room, tab)}<span class="grow"></span>${heatingSwitch(ctx, room, status)}
+      ${tabs(ctx, room, tab)}${heatingSwitch(ctx, room, status)}
     </div>
     ${roomDetail(ctx, room, { tab, status })}
   </div>`;
@@ -4245,6 +4409,7 @@ function daySettingsParts(ctx) {
 }
 
 // src/ui/views/settings.js
+var EXERCISE_KEY = "exercise";
 function roomInfo(ctx, room) {
   const text = texts(ctx);
   const parts = [
@@ -4310,8 +4475,10 @@ function exerciseFields(ctx) {
 }
 function exercisePanel(ctx) {
   const text = texts(ctx);
-  const run = () => confirm(text.confirm_exercise) && exerciseNow(ctx);
-  const now2 = button(text.exercise_now, run, { kind: "btn flat small" });
+  const asking = ctx.store.ui.confirming === EXERCISE_KEY;
+  const run = () => confirmed(ctx, EXERCISE_KEY, () => exerciseNow(ctx));
+  const label = asking ? text.really_exercise : text.exercise_now;
+  const now2 = button(label, run, { kind: `btn flat small ${asking ? "asking" : ""}` });
   const save2 = button(text.save, () => commitExercise(ctx));
   return b2`<div class="panel">${exerciseFields(ctx)}
     <div class="dim small">${text.exercise_help}</div>

@@ -33,7 +33,7 @@ single setpoint.
 Based on the idea and structure of [Temperate](https://github.com/xman2000/temperate-card) by Stephen
 (MIT), which does this for heat/cool thermostats with one day plan. Design: [docs/design.md](docs/design.md).
 
-Status: early (0.13). Tested with Aqara E1/W600 thermostats through HomeKit Controller on HA 2026.11.
+Status: early (0.14). Tested with Aqara E1/W600 thermostats through HomeKit Controller on HA 2026.11.
 
 ## Parts
 
@@ -101,7 +101,7 @@ works against the plan, and Weekheat cannot tell it from a change made by hand.
 - **Blueprints**: HACS does not update them. When a release changes them, an administrator's card shows
   *"The Weekheat blueprints are older than the card"* with **Update now**: one tap saves the blueprints
   of exactly that card release (importing one that is missing, such as the valve exercise blueprint
-  that came after 0.13), creates the valve exercise script if there is none and reloads the
+  that came with 0.14), creates the valve exercise script if there is none and reloads the
   automations; nothing else to do. The release notes say when a release changes the blueprints.
 - Without the card (or before 0.12): *Settings → Automations & scenes → Blueprints*, the ⋮ menu of
   *Weekheat room*, *Weekheat day* and *Weekheat valve exercise*, **Re-import blueprint** (a missing

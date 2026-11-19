@@ -5,7 +5,7 @@ blueprint:
     after each, then back to the setpoints and modes they had before. Thermostats that are
     unavailable are left out. Called by the Weekheat room automations at their weekly time
     and when the card's "Run now" is pressed; it needs no settings. Pairs with the Weekheat
-    card (custom:weekheat-card). Weekheat 0.13.0
+    card (custom:weekheat-card). Weekheat 0.14.0
   domain: script
   homeassistant:
     min_version: 2025.7.0
