@@ -62,8 +62,11 @@ async def test_without_the_script_the_room_says_so_and_heats_on(home):
     """No script.weekheat_exercise: a notification, and the plan applies as usual."""
     await home.start(Room(extra=EXERCISE), exercise=False)
     await home.at("12:00:00")
+    home.taken()
     home.hass.bus.async_fire("weekheat_exercise", {})
     await home.settle()
-    assert home.taken() == [[A, 17.0], [B, 17.0]]
+    assert home.taken() == []
     note = home.notifications()["weekheat_bad_exercise"]
     assert "script.weekheat_exercise" in note["message"]
+    await home.at("17:00:01")
+    assert home.taken() == [[A, 21.0], [B, 21.0]]

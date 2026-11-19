@@ -1,3 +1,5 @@
 # The oldest Home Assistant the blueprints load in (their object selectors with fields need
 # 2025.7; design.md, Prerequisites): 2025.7.4.
 pytest-homeassistant-custom-component==0.13.264
+# aiodns 3.5.0 (pinned by Home Assistant 2025.7) fails with pycares 5 (no ares_query_a_result).
+pycares==4.11.0

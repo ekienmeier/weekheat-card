@@ -73,8 +73,8 @@ async def closed_by_the_room_sensor(home) -> None:
     extra = {"room_sensor": SENSOR, "room_margin": 0.5, "room_hold": 10}
     await home.start(Room(extra=extra))
     await home.at("06:30:00")
-    await home.run()
-    assert home.taken() == [[A, 21.0], [B, 21.0]]
+    assert [home.setpoint(A), home.setpoint(B)] == [21.0, 21.0]
+    home.taken()
     await home.at("07:00:01")
 
 

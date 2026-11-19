@@ -111,8 +111,7 @@ async def test_the_day_script_picks_the_plan(home, events, holidays, wanted):
     plans = {"Werktag": WORKING_DAY, "Freier Tag": FREE_DAY, "Homeoffice": office}
     await home.start(Room(plans=plans))
     await home.at("08:00:00")
-    await home.run()
-    assert home.taken() == [[A, wanted], [B, wanted]]
+    assert [home.setpoint(A), home.setpoint(B)] == [wanted, wanted]
 
 
 FAILURES = ["raises an error", "answers nothing"]
@@ -141,8 +140,7 @@ async def test_a_failing_day_script_lets_the_weekday_decide(home, how, days, wan
     """The day script fails: Monday is a working day, Saturday a free day (08:00: 17 / 21 °C)."""
     await failing_day_script(home, how)
     await home.at("08:00:00", days=days)
-    await home.run()
-    assert home.taken() == [[A, wanted], [B, wanted]]
+    assert [home.setpoint(A), home.setpoint(B)] == [wanted, wanted]
 
 
 @pytest.mark.xfail(
@@ -154,5 +152,4 @@ async def test_a_missing_day_script_lets_the_weekday_decide(home):
     """The day script does not exist: the weekday should decide, as when it fails."""
     await home.start(Room(extra={"day_script": "script.no_such_day"}))
     await home.at("08:00:00")
-    await home.run()
-    assert home.taken() == [[A, 17.0], [B, 17.0]]
+    assert [home.setpoint(A), home.setpoint(B)] == [17.0, 17.0]

@@ -37,10 +37,22 @@ DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sun
 # The setpoint of Off, in °C (off_temp in the room blueprint).
 OFF = 5.0
 # The card's starter plans: a period's start and its temperature (None: Off).
-WORKING_DAY = [("00:00", None), ("06:00", 21), ("07:00", 17), ("17:00", 21), ("21:00", 18),
-               ("22:00", None)]
-FREE_DAY = [("00:00", None), ("07:30", 21), ("08:30", 19), ("17:00", 21), ("21:30", 18),
-            ("22:30", None)]
+WORKING_DAY = [
+    ("00:00", None),
+    ("06:00", 21),
+    ("07:00", 17),
+    ("17:00", 21),
+    ("21:00", 18),
+    ("22:00", None),
+]
+FREE_DAY = [
+    ("00:00", None),
+    ("07:30", 21),
+    ("08:30", 19),
+    ("17:00", 21),
+    ("21:30", 18),
+    ("22:30", None),
+]
 # The Workday sensor and the calendars the day script reads.
 WORKDAY = "binary_sensor.workday_sensor"
 EXCEPTIONS = "calendar.weekheat_exceptions"
@@ -51,6 +63,10 @@ YIELDS = 200
 MAX_STEPS = 2000
 # The shortest step of time between two timers, in seconds (so that time always moves on).
 MIN_STEP = 1.0
+# Timers due this close after the next one fire with it, in seconds: Home Assistant's loop runs
+# the timers that are due together (e.g. every schedule helper's at midnight) before the runs they
+# start, so a room does not see one helper on the new day and another still on the old one.
+TOGETHER = 0.01
 
 
 def blocks(periods: list) -> list:
@@ -309,7 +325,7 @@ class Home:
         whens = [handle.when() for handle in handles if not handle.cancelled()]
         if not whens:
             return None
-        seconds = max(min(whens) - loop.time(), MIN_STEP)
+        seconds = max(min(whens) - loop.time() + TOGETHER, MIN_STEP)
         return dt_util.utcnow() + timedelta(seconds=seconds)
 
     async def settle(self, step: float = 1.0) -> None:
