@@ -45,7 +45,7 @@ export const forms = css`
   .day.free .day-kind { color: var(--wh-free); }
   .day.exception .day-kind::after { content: ' ✎'; color: var(--wh-manual); }
   .day-reason { grid-column: 2; font-size: 0.88em; }
-  .day-plans { grid-column: 2; font-size: 0.85em; }
+  .day-plans { grid-column: 2; font-size: 0.85em; display: flex; flex-direction: column; }
   .settings-title { font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.04em;
     margin: 14px 0 4px;
     color: var(--secondary-text-color); }

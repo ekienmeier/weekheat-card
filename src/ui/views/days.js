@@ -29,18 +29,18 @@ function dayName(ctx, day) {
 }
 
 /**
- * The plan each room uses that day: "Alle Räume: Werktag", or one per room.
+ * The plan each room uses that day: "Alle Räume: Werktag", or one line per room.
  * @param {import('../../state/context.js').Context} ctx
  * @param {import('../../domain/plans.js').Day} day
- * @returns {string}
+ * @returns {string[]} the lines
  */
 function plansOfDay(ctx, day) {
   const friendly = friendlyNames(ctx);
   const planOf = (room) => planName(ctx, room, planForDay(room, day, friendly));
   const each = ctx.store.data.rooms.map((room) => [room.name, planOf(room)]);
   const same = each.length > 1 && each.every(([, plan]) => plan === each[0][1]);
-  if (same) return `${texts(ctx).all_rooms}: ${each[0][1]}`;
-  return each.map(([room, plan]) => `${room}: ${plan}`).join(' · ');
+  if (same) return [`${texts(ctx).all_rooms}: ${each[0][1]}`];
+  return each.map(([room, plan]) => `${room}: ${plan}`);
 }
 
 /**
@@ -98,12 +98,13 @@ function dayView(ctx, day) {
   const reason = reasonText(day, text);
   const kind = `${day.free ? text.free_day : text.working_day}${day.plan ? ` · ${day.plan}` : ''}`;
   const open = ctx.store.ui.dayEdit?.date === day.date;
+  const lines = plansOfDay(ctx, day).map((line) => html`<span>${line}</span>`);
   const classes = `day ${day.free ? 'free' : ''} ${day.kind === 'exception' ? 'exception' : ''}`;
   return html`<div class=${classes}>
     <button class="day-row" aria-expanded=${open} @click=${() => toggleDay(ctx, day.date)}>
       ${dayName(ctx, day)}<span class="day-kind">${kind}</span>
       ${reason ? html`<span class="day-reason dim">${reason}</span>` : nothing}
-      <span class="day-plans dim">${plansOfDay(ctx, day)}</span></button>
+      <span class="day-plans dim">${lines}</span></button>
     ${open ? dayForm(ctx) : nothing}</div>`;
 }
 

@@ -33,7 +33,7 @@ single setpoint.
 Based on the idea and structure of [Temperate](https://github.com/xman2000/temperate-card) by Stephen
 (MIT), which does this for heat/cool thermostats with one day plan. Design: [docs/design.md](docs/design.md).
 
-Status: early (0.14). Tested with Aqara E1/W600 thermostats through HomeKit Controller on HA 2026.11.
+Status: early (0.15). Tested with Aqara E1/W600 thermostats through HomeKit Controller on HA 2026.11.
 
 ## Parts
 

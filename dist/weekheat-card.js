@@ -982,7 +982,7 @@ function olderVersion(a3, b3) {
 }
 
 // src/version.js
-var VERSION = "0.14.0";
+var VERSION = "0.15.0";
 var BLUEPRINT_VERSION = "0.14.0";
 
 // src/ha/blueprints.js
@@ -2365,7 +2365,7 @@ var forms = i`
   .day.free .day-kind { color: var(--wh-free); }
   .day.exception .day-kind::after { content: ' ✎'; color: var(--wh-manual); }
   .day-reason { grid-column: 2; font-size: 0.88em; }
-  .day-plans { grid-column: 2; font-size: 0.85em; }
+  .day-plans { grid-column: 2; font-size: 0.85em; display: flex; flex-direction: column; }
   .settings-title { font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.04em;
     margin: 14px 0 4px;
     color: var(--secondary-text-color); }
@@ -2827,8 +2827,8 @@ function plansOfDay(ctx, day) {
   const planOf2 = (room) => planName(ctx, room, planForDay(room, day, friendly));
   const each = ctx.store.data.rooms.map((room) => [room.name, planOf2(room)]);
   const same = each.length > 1 && each.every(([, plan2]) => plan2 === each[0][1]);
-  if (same) return `${texts(ctx).all_rooms}: ${each[0][1]}`;
-  return each.map(([room, plan2]) => `${room}: ${plan2}`).join(" \xB7 ");
+  if (same) return [`${texts(ctx).all_rooms}: ${each[0][1]}`];
+  return each.map(([room, plan2]) => `${room}: ${plan2}`);
 }
 function dayChoices(ctx) {
   const text = texts(ctx);
@@ -2863,12 +2863,13 @@ function dayView(ctx, day) {
   const reason = reasonText(day, text);
   const kind = `${day.free ? text.free_day : text.working_day}${day.plan ? ` \xB7 ${day.plan}` : ""}`;
   const open = ctx.store.ui.dayEdit?.date === day.date;
+  const lines = plansOfDay(ctx, day).map((line) => b2`<span>${line}</span>`);
   const classes = `day ${day.free ? "free" : ""} ${day.kind === "exception" ? "exception" : ""}`;
   return b2`<div class=${classes}>
     <button class="day-row" aria-expanded=${open} @click=${() => toggleDay(ctx, day.date)}>
       ${dayName(ctx, day)}<span class="day-kind">${kind}</span>
       ${reason ? b2`<span class="day-reason dim">${reason}</span>` : A}
-      <span class="day-plans dim">${plansOfDay(ctx, day)}</span></button>
+      <span class="day-plans dim">${lines}</span></button>
     ${open ? dayForm2(ctx) : A}</div>`;
 }
 function daysView(ctx) {
